@@ -1,0 +1,2946 @@
+<script>
+// ============================================================================
+// AtlasLocal.html
+// MOTOR LOCAL DE FILTROS · ETAPA 2
+// ============================================================================
+// Esta capa NO reemplaza los renderizadores del Index.
+// Solo construye los mismos objetos que esperan renderResumen(), renderVentas()
+// y renderVendedores(), pero usando registros ya cargados en memoria.
+//
+// Resultado:
+// - Ruta / Vendedor / Giro: sin google.script.run en estos 3 módulos.
+// - El resto de módulos conserva la precarga progresiva existente.
+// ============================================================================
+
+(function() {
+
+  'use strict';
+
+
+  const LOCAL = {
+
+    listo:
+      false,
+
+    cargando:
+      false,
+
+    paquete:
+      null,
+
+    error:
+      null
+
+  };
+
+
+  window.ATLAS_LOCAL =
+    LOCAL;
+
+
+  // ==========================================================================
+  // UTILIDADES
+  // ==========================================================================
+
+  function n(
+    valor
+  ) {
+
+    const x =
+      Number(
+        valor || 0
+      );
+
+    return Number.isFinite(
+      x
+    )
+      ? x
+      : 0;
+
+  }
+
+
+  function red(
+    valor
+  ) {
+
+    return Math.round(
+      n(
+        valor
+      ) *
+      100
+    ) /
+    100;
+
+  }
+
+
+  function variacion(
+    actual,
+    anterior
+  ) {
+
+    actual =
+      n(
+        actual
+      );
+
+    anterior =
+      n(
+        anterior
+      );
+
+
+    if (
+      actual === 0 &&
+      anterior === 0
+    ) {
+
+      return 0;
+
+    }
+
+
+    if (
+      anterior === 0
+    ) {
+
+      return null;
+
+    }
+
+
+    return red(
+      (
+        (
+          actual -
+          anterior
+        ) /
+        Math.abs(
+          anterior
+        )
+      ) *
+      100
+    );
+
+  }
+
+
+  function monedaTexto(
+    valor
+  ) {
+
+    return '$' +
+      n(
+        valor
+      )
+        .toLocaleString(
+          'es-MX',
+          {
+            maximumFractionDigits:
+              0
+          }
+        );
+
+  }
+
+
+  function pctTexto(
+    valor
+  ) {
+
+    if (
+      valor === null ||
+      valor === undefined
+    ) {
+
+      return 'sin referencia';
+
+    }
+
+
+    const x =
+      red(
+        valor
+      );
+
+
+    return (
+      x > 0
+        ? '+'
+        : ''
+    ) +
+    x.toLocaleString(
+      'es-MX',
+      {
+        maximumFractionDigits:
+          1
+      }
+    ) +
+    '%';
+
+  }
+
+
+  function filtrosActuales() {
+
+    return {
+
+      periodo:
+        valor(
+          'filtroPeriodo'
+        ) ||
+        'mes',
+
+      ruta:
+        valor(
+          'filtroRuta'
+        ) ||
+        '',
+
+      vendedor:
+        valor(
+          'filtroVendedor'
+        ) ||
+        '',
+
+      giro:
+        valor(
+          'filtroGiro'
+        ) ||
+        ''
+
+    };
+
+  }
+
+
+  function periodoActual(
+    tipo
+  ) {
+
+    if (
+      !LOCAL.paquete ||
+      !LOCAL.paquete.periodos
+    ) {
+
+      return null;
+
+    }
+
+
+    return LOCAL
+      .paquete
+      .periodos[
+        tipo
+      ] ||
+      null;
+
+  }
+
+
+  function soportadoLocalmente() {
+
+    if (
+      !LOCAL.listo
+    ) {
+
+      return false;
+
+    }
+
+
+    const filtros =
+      filtrosActuales();
+
+
+    return !!periodoActual(
+      filtros.periodo
+    );
+
+  }
+
+
+  function cumpleFiltros(
+    r,
+    filtros
+  ) {
+
+    if (
+      filtros.ruta &&
+      filtros.ruta !== '__ALL__' &&
+      String(
+        r.ruta
+      ) !==
+      String(
+        filtros.ruta
+      )
+    ) {
+
+      return false;
+
+    }
+
+
+    if (
+      filtros.vendedor &&
+      filtros.vendedor !== '__ALL__' &&
+      String(
+        r.vendedorId
+      ) !==
+      String(
+        filtros.vendedor
+      )
+    ) {
+
+      return false;
+
+    }
+
+
+    if (
+      filtros.giro &&
+      filtros.giro !== '__ALL__' &&
+      String(
+        r.giro
+      ) !==
+      String(
+        filtros.giro
+      )
+    ) {
+
+      return false;
+
+    }
+
+
+    return true;
+
+  }
+
+
+  function entre(
+    key,
+    inicio,
+    fin
+  ) {
+
+    return !!inicio &&
+      !!fin &&
+      key >= inicio &&
+      key <= fin;
+
+  }
+
+
+  function permitido(
+    r,
+    periodo
+  ) {
+
+    if (
+      periodo.excluirDomingos &&
+      r.diaSemana === 7
+    ) {
+
+      return false;
+
+    }
+
+
+    return true;
+
+  }
+
+
+  function obtenerConjuntos() {
+
+    const filtros =
+      filtrosActuales();
+
+
+    const periodo =
+      periodoActual(
+        filtros.periodo
+      );
+
+
+    const base =
+      LOCAL
+        .paquete
+        .registros
+        .filter(
+          r =>
+            cumpleFiltros(
+              r,
+              filtros
+            )
+        );
+
+
+    const visibles =
+      base.filter(
+        r =>
+          entre(
+            r.fechaKey,
+            periodo.actualInicioKey,
+            periodo.actualFinKey
+          ) &&
+          permitido(
+            r,
+            periodo
+          )
+      );
+
+
+    let actualComp = [];
+    let anteriorComp = [];
+
+
+    if (
+      periodo.comparacionHabilitada
+    ) {
+
+      actualComp =
+        base.filter(
+          r =>
+            entre(
+              r.fechaKey,
+              periodo.comparacionActualInicioKey,
+              periodo.comparacionActualFinKey
+            ) &&
+            permitido(
+              r,
+              periodo
+            )
+        );
+
+
+      anteriorComp =
+        base.filter(
+          r =>
+            entre(
+              r.fechaKey,
+              periodo.comparacionAnteriorInicioKey,
+              periodo.comparacionAnteriorFinKey
+            ) &&
+            permitido(
+              r,
+              periodo
+            )
+        );
+
+    }
+
+
+    return {
+
+      filtros:
+        filtros,
+
+      periodo:
+        periodo,
+
+      base:
+        base,
+
+      visibles:
+        visibles,
+
+      actualComp:
+        actualComp,
+
+      anteriorComp:
+        anteriorComp
+
+    };
+
+  }
+
+
+  function totales(
+    registros
+  ) {
+
+    let venta = 0;
+    let agua = 0;
+    let superIce = 0;
+    let comision = 0;
+
+
+    const tickets =
+      new Set();
+
+    const clientes =
+      new Set();
+
+
+    registros.forEach(
+      r => {
+
+        venta +=
+          n(
+            r.importe
+          );
+
+        agua +=
+          n(
+            r.agua
+          );
+
+        superIce +=
+          n(
+            r.superIce
+          );
+
+        comision +=
+          n(
+            r.comision
+          );
+
+
+        tickets.add(
+          r.idVenta
+        );
+
+
+        clientes.add(
+          r.clienteKey
+        );
+
+      }
+    );
+
+
+    const cantTickets =
+      tickets.size;
+
+    const cantClientes =
+      clientes.size;
+
+
+    return {
+
+      venta:
+        red(
+          venta
+        ),
+
+      agua:
+        red(
+          agua
+        ),
+
+      superIce:
+        red(
+          superIce
+        ),
+
+      comision:
+        red(
+          comision
+        ),
+
+      tickets:
+        cantTickets,
+
+      clientes:
+        cantClientes,
+
+      ticketPromedio:
+        cantTickets
+          ? red(
+              venta /
+              cantTickets
+            )
+          : 0,
+
+      unidadesTicket:
+        cantTickets
+          ? red(
+              (
+                agua +
+                superIce
+              ) /
+              cantTickets
+            )
+          : 0,
+
+      ventaCliente:
+        cantClientes
+          ? red(
+              venta /
+              cantClientes
+            )
+          : 0
+
+    };
+
+  }
+
+
+  function kpiResumen(
+    visible,
+    actual,
+    anterior,
+    habilitado
+  ) {
+
+    return {
+
+      actual:
+        red(
+          visible
+        ),
+
+      actualComparable:
+        habilitado
+          ? red(
+              actual
+            )
+          : null,
+
+      anterior:
+        habilitado
+          ? red(
+              anterior
+            )
+          : null,
+
+      variacion:
+        habilitado
+          ? variacion(
+              actual,
+              anterior
+            )
+          : null
+
+    };
+
+  }
+
+
+  function kpiVentas(
+    visible,
+    actual,
+    anterior,
+    habilitado
+  ) {
+
+    return {
+
+      actual:
+        red(
+          visible
+        ),
+
+      variacion:
+        habilitado
+          ? variacion(
+              actual,
+              anterior
+            )
+          : null
+
+    };
+
+  }
+
+
+  function tendencia(
+    registros,
+    periodo
+  ) {
+
+    const mapa = {};
+
+
+    registros.forEach(
+      r => {
+
+        let key;
+        let label;
+
+
+        if (
+          periodo.agrupacion ===
+          'hora'
+        ) {
+
+          key =
+            String(
+              r.hora
+            )
+              .padStart(
+                2,
+                '0'
+              );
+
+          label =
+            key +
+            ':00';
+
+        }
+
+        else if (
+          periodo.agrupacion ===
+          'mes'
+        ) {
+
+          key =
+            r.fechaKey
+              .substring(
+                0,
+                7
+              );
+
+          const nombres = [
+            'Ene','Feb','Mar','Abr','May','Jun',
+            'Jul','Ago','Sep','Oct','Nov','Dic'
+          ];
+
+          const mes =
+            Number(
+              key.substring(
+                5,
+                7
+              )
+            ) -
+            1;
+
+          label =
+            nombres[
+              mes
+            ] ||
+            key;
+
+        }
+
+        else {
+
+          key =
+            r.fechaKey;
+
+          const p =
+            key.split(
+              '-'
+            );
+
+          label =
+            p[2] +
+            '/' +
+            p[1];
+
+        }
+
+
+        if (
+          !mapa[key]
+        ) {
+
+          mapa[key] = {
+
+            key:
+              key,
+
+            label:
+              label,
+
+            venta:
+              0,
+
+            agua:
+              0,
+
+            superIce:
+              0,
+
+            tickets:
+              new Set()
+
+          };
+
+        }
+
+
+        mapa[key].venta +=
+          n(
+            r.importe
+          );
+
+        mapa[key].agua +=
+          n(
+            r.agua
+          );
+
+        mapa[key].superIce +=
+          n(
+            r.superIce
+          );
+
+        mapa[key]
+          .tickets
+          .add(
+            r.idVenta
+          );
+
+      }
+    );
+
+
+    return Object
+      .keys(
+        mapa
+      )
+      .sort()
+      .map(
+        key => ({
+
+          key:
+            key,
+
+          label:
+            mapa[key].label,
+
+          venta:
+            red(
+              mapa[key].venta
+            ),
+
+          agua:
+            red(
+              mapa[key].agua
+            ),
+
+          superIce:
+            red(
+              mapa[key].superIce
+            ),
+
+          tickets:
+            mapa[key]
+              .tickets
+              .size
+
+        })
+      );
+
+  }
+
+
+  function agruparCampo(
+    registros,
+    campoKey,
+    campoNombre
+  ) {
+
+    const mapa = {};
+
+
+    registros.forEach(
+      r => {
+
+        const key =
+          String(
+            r[campoKey] ||
+            'Sin dato'
+          );
+
+        const nombre =
+          String(
+            r[campoNombre] ||
+            key
+          );
+
+
+        if (
+          !mapa[key]
+        ) {
+
+          mapa[key] = {
+
+            nombre:
+              nombre,
+
+            venta:
+              0,
+
+            agua:
+              0,
+
+            superIce:
+              0,
+
+            comision:
+              0,
+
+            tickets:
+              new Set(),
+
+            clientes:
+              new Set()
+
+          };
+
+        }
+
+
+        mapa[key].venta +=
+          n(
+            r.importe
+          );
+
+        mapa[key].agua +=
+          n(
+            r.agua
+          );
+
+        mapa[key].superIce +=
+          n(
+            r.superIce
+          );
+
+        mapa[key].comision +=
+          n(
+            r.comision
+          );
+
+        mapa[key]
+          .tickets
+          .add(
+            r.idVenta
+          );
+
+        mapa[key]
+          .clientes
+          .add(
+            r.clienteKey
+          );
+
+      }
+    );
+
+
+    return mapa;
+
+  }
+
+
+  function rankingResumen(
+    visibles,
+    actualComp,
+    anteriorComp,
+    campoKey,
+    campoNombre,
+    ventaTotal,
+    habilitado
+  ) {
+
+    const a =
+      agruparCampo(
+        visibles,
+        campoKey,
+        campoNombre
+      );
+
+    const ac =
+      agruparCampo(
+        actualComp,
+        campoKey,
+        campoNombre
+      );
+
+    const ant =
+      agruparCampo(
+        anteriorComp,
+        campoKey,
+        campoNombre
+      );
+
+
+    return Object
+      .keys(
+        a
+      )
+      .map(
+        key => {
+
+          const x =
+            a[key];
+
+          const xa =
+            ac[key] ||
+            {
+              venta:
+                0
+            };
+
+          const xb =
+            ant[key] ||
+            {
+              venta:
+                0
+            };
+
+
+          return {
+
+            key:
+              key,
+
+            nombre:
+              x.nombre,
+
+            venta:
+              red(
+                x.venta
+              ),
+
+            agua:
+              red(
+                x.agua
+              ),
+
+            superIce:
+              red(
+                x.superIce
+              ),
+
+            tickets:
+              x.tickets.size,
+
+            clientes:
+              x.clientes.size,
+
+            ticketPromedio:
+              x.tickets.size
+                ? red(
+                    x.venta /
+                    x.tickets.size
+                  )
+                : 0,
+
+            participacion:
+              ventaTotal
+                ? red(
+                    x.venta /
+                    ventaTotal *
+                    100
+                  )
+                : 0,
+
+            variacion:
+              habilitado
+                ? variacion(
+                    xa.venta,
+                    xb.venta
+                  )
+                : null
+
+          };
+
+        }
+      )
+      .sort(
+        (a, b) =>
+          b.venta -
+          a.venta
+      )
+      .slice(
+        0,
+        10
+      );
+
+  }
+
+
+  // ==========================================================================
+  // RESUMEN
+  // ==========================================================================
+
+  function dataResumen() {
+
+    const x =
+      obtenerConjuntos();
+
+
+    const t =
+      totales(
+        x.visibles
+      );
+
+    const ta =
+      totales(
+        x.actualComp
+      );
+
+    const tb =
+      totales(
+        x.anteriorComp
+      );
+
+
+    const habilitado =
+      x.periodo
+        .comparacionHabilitada;
+
+
+    const kpis = {
+
+      venta:
+        kpiResumen(
+          t.venta,
+          ta.venta,
+          tb.venta,
+          habilitado
+        ),
+
+      agua:
+        kpiResumen(
+          t.agua,
+          ta.agua,
+          tb.agua,
+          habilitado
+        ),
+
+      superIce:
+        kpiResumen(
+          t.superIce,
+          ta.superIce,
+          tb.superIce,
+          habilitado
+        ),
+
+      tickets:
+        kpiResumen(
+          t.tickets,
+          ta.tickets,
+          tb.tickets,
+          habilitado
+        ),
+
+      ticketPromedio:
+        kpiResumen(
+          t.ticketPromedio,
+          ta.ticketPromedio,
+          tb.ticketPromedio,
+          habilitado
+        ),
+
+      clientes:
+        kpiResumen(
+          t.clientes,
+          ta.clientes,
+          tb.clientes,
+          habilitado
+        ),
+
+      comision:
+        kpiResumen(
+          t.comision,
+          ta.comision,
+          tb.comision,
+          habilitado
+        ),
+
+      ventaCliente:
+        kpiResumen(
+          t.ventaCliente,
+          ta.ventaCliente,
+          tb.ventaCliente,
+          habilitado
+        )
+
+    };
+
+
+    const vendedores =
+      rankingResumen(
+        x.visibles,
+        x.actualComp,
+        x.anteriorComp,
+        'vendedorId',
+        'vendedor',
+        t.venta,
+        habilitado
+      );
+
+
+    const rutas =
+      rankingResumen(
+        x.visibles,
+        x.actualComp,
+        x.anteriorComp,
+        'ruta',
+        'ruta',
+        t.venta,
+        habilitado
+      );
+
+
+    const insights = [];
+
+
+    if (
+      !habilitado
+    ) {
+
+      insights.push({
+
+        tipo:
+          'info',
+
+        titulo:
+          'Jornada todavía abierta',
+
+        texto:
+          'Los datos actuales se muestran normalmente, pero Atlas habilitará las comparaciones después de las 7:00 p. m.'
+
+      });
+
+    }
+
+    else {
+
+      const vv =
+        kpis.venta.variacion;
+
+
+      if (
+        vv === null
+      ) {
+
+        insights.push({
+
+          tipo:
+            'info',
+
+          titulo:
+            'Sin referencia comparable',
+
+          texto:
+            'El periodo anterior no contiene información suficiente para calcular una variación confiable.'
+
+        });
+
+      }
+
+      else if (
+        vv >= 5
+      ) {
+
+        insights.push({
+
+          tipo:
+            'positivo',
+
+          titulo:
+            'La venta está creciendo',
+
+          texto:
+            'La venta presenta un crecimiento de ' +
+            pctTexto(
+              vv
+            ) +
+            ' frente a ' +
+            x.periodo.etiquetaAnterior +
+            '.'
+
+        });
+
+      }
+
+      else if (
+        vv <= -5
+      ) {
+
+        insights.push({
+
+          tipo:
+            'negativo',
+
+          titulo:
+            'La venta requiere atención',
+
+          texto:
+            'La venta se encuentra ' +
+            pctTexto(
+              Math.abs(
+                vv
+              )
+            ) +
+            ' por debajo de ' +
+            x.periodo.etiquetaAnterior +
+            '.'
+
+        });
+
+      }
+
+    }
+
+
+    if (
+      vendedores.length
+    ) {
+
+      const top =
+        vendedores[0];
+
+
+      insights.push({
+
+        tipo:
+          'positivo',
+
+        titulo:
+          'Mayor aportación comercial',
+
+        texto:
+          top.nombre +
+          ' genera ' +
+          pctTexto(
+            top.participacion
+          ) +
+          ' de la venta del periodo, con ' +
+          monedaTexto(
+            top.venta
+          ) +
+          '.'
+
+      });
+
+    }
+
+
+    if (
+      rutas.length
+    ) {
+
+      const top =
+        rutas[0];
+
+
+      insights.push({
+
+        tipo:
+          'info',
+
+        titulo:
+          'Ruta con mayor venta',
+
+        texto:
+          'La ruta ' +
+          top.nombre +
+          ' concentra ' +
+          pctTexto(
+            top.participacion
+          ) +
+          ' de la venta del periodo.'
+
+      });
+
+    }
+
+
+    return {
+
+      ok:
+        true,
+
+      sinDatos:
+        false,
+
+      generado:
+        LOCAL.paquete.generado,
+
+      periodo:
+        x.periodo,
+
+      filtrosAplicados:
+        x.filtros,
+
+      catalogos:
+        LOCAL.paquete.catalogos,
+
+      kpis:
+        kpis,
+
+      tendencia:
+        tendencia(
+          x.visibles,
+          x.periodo
+        ),
+
+      vendedores:
+        vendedores,
+
+      rutas:
+        rutas,
+
+      insights:
+        insights.slice(
+          0,
+          5
+        ),
+
+      meta: {
+
+        registrosPeriodo:
+          x.visibles.length,
+
+        fuenteDatos:
+          'memoria local'
+
+      }
+
+    };
+
+  }
+
+
+  // ==========================================================================
+  // VENTAS
+  // ==========================================================================
+
+  function rankingGiros(
+    registros,
+    ventaTotal
+  ) {
+
+    const mapa = {};
+
+
+    registros.forEach(
+      r => {
+
+        const key =
+          r.giro ||
+          'Sin giro';
+
+
+        if (
+          !mapa[key]
+        ) {
+
+          mapa[key] = {
+
+            giro:
+              key,
+
+            venta:
+              0,
+
+            agua:
+              0,
+
+            superIce:
+              0,
+
+            tickets:
+              new Set(),
+
+            clientes:
+              new Set()
+
+          };
+
+        }
+
+
+        mapa[key].venta +=
+          n(
+            r.importe
+          );
+
+        mapa[key].agua +=
+          n(
+            r.agua
+          );
+
+        mapa[key].superIce +=
+          n(
+            r.superIce
+          );
+
+        mapa[key]
+          .tickets
+          .add(
+            r.idVenta
+          );
+
+        mapa[key]
+          .clientes
+          .add(
+            r.clienteKey
+          );
+
+      }
+    );
+
+
+    return Object
+      .values(
+        mapa
+      )
+      .map(
+        x => ({
+
+          giro:
+            x.giro,
+
+          venta:
+            red(
+              x.venta
+            ),
+
+          agua:
+            red(
+              x.agua
+            ),
+
+          superIce:
+            red(
+              x.superIce
+            ),
+
+          tickets:
+            x.tickets.size,
+
+          clientes:
+            x.clientes.size,
+
+          ticketPromedio:
+            x.tickets.size
+              ? red(
+                  x.venta /
+                  x.tickets.size
+                )
+              : 0,
+
+          participacion:
+            ventaTotal
+              ? red(
+                  x.venta /
+                  ventaTotal *
+                  100
+                )
+              : 0
+
+        })
+      )
+      .sort(
+        (a, b) =>
+          b.venta -
+          a.venta
+      );
+
+  }
+
+
+  function rankingClientes(
+    registros,
+    ventaTotal
+  ) {
+
+    const mapa = {};
+
+
+    registros.forEach(
+      r => {
+
+        const key =
+          r.clienteKey;
+
+
+        if (
+          !mapa[key]
+        ) {
+
+          mapa[key] = {
+
+            key:
+              key,
+
+            nombre:
+              r.cliente,
+
+            telefono:
+              r.telefono,
+
+            vendedor:
+              r.vendedor,
+
+            giro:
+              r.giro,
+
+            venta:
+              0,
+
+            agua:
+              0,
+
+            superIce:
+              0,
+
+            tickets:
+              new Set(),
+
+            ultimaCompra:
+              r.fechaKey
+
+          };
+
+        }
+
+
+        mapa[key].venta +=
+          n(
+            r.importe
+          );
+
+        mapa[key].agua +=
+          n(
+            r.agua
+          );
+
+        mapa[key].superIce +=
+          n(
+            r.superIce
+          );
+
+        mapa[key]
+          .tickets
+          .add(
+            r.idVenta
+          );
+
+
+        if (
+          r.fechaKey >
+          mapa[key].ultimaCompra
+        ) {
+
+          mapa[key].ultimaCompra =
+            r.fechaKey;
+
+        }
+
+      }
+    );
+
+
+    return Object
+      .values(
+        mapa
+      )
+      .map(
+        x => ({
+
+          key:
+            x.key,
+
+          nombre:
+            x.nombre,
+
+          telefono:
+            x.telefono,
+
+          vendedor:
+            x.vendedor,
+
+          giro:
+            x.giro,
+
+          venta:
+            red(
+              x.venta
+            ),
+
+          agua:
+            red(
+              x.agua
+            ),
+
+          superIce:
+            red(
+              x.superIce
+            ),
+
+          tickets:
+            x.tickets.size,
+
+          ticketPromedio:
+            x.tickets.size
+              ? red(
+                  x.venta /
+                  x.tickets.size
+                )
+              : 0,
+
+          participacion:
+            ventaTotal
+              ? red(
+                  x.venta /
+                  ventaTotal *
+                  100
+                )
+              : 0,
+
+          ultimaCompra:
+            x.ultimaCompra
+
+        })
+      )
+      .sort(
+        (a, b) =>
+          b.venta -
+          a.venta
+      )
+      .slice(
+        0,
+        50
+      );
+
+  }
+
+
+  function dataVentas() {
+
+    const x =
+      obtenerConjuntos();
+
+
+    const t =
+      totales(
+        x.visibles
+      );
+
+    const ta =
+      totales(
+        x.actualComp
+      );
+
+    const tb =
+      totales(
+        x.anteriorComp
+      );
+
+
+    const habilitado =
+      x.periodo
+        .comparacionHabilitada;
+
+
+    const kpis = {
+
+      venta:
+        kpiVentas(
+          t.venta,
+          ta.venta,
+          tb.venta,
+          habilitado
+        ),
+
+      tickets:
+        kpiVentas(
+          t.tickets,
+          ta.tickets,
+          tb.tickets,
+          habilitado
+        ),
+
+      ticketPromedio:
+        kpiVentas(
+          t.ticketPromedio,
+          ta.ticketPromedio,
+          tb.ticketPromedio,
+          habilitado
+        ),
+
+      clientes:
+        kpiVentas(
+          t.clientes,
+          ta.clientes,
+          tb.clientes,
+          habilitado
+        ),
+
+      agua:
+        kpiVentas(
+          t.agua,
+          ta.agua,
+          tb.agua,
+          habilitado
+        ),
+
+      superIce:
+        kpiVentas(
+          t.superIce,
+          ta.superIce,
+          tb.superIce,
+          habilitado
+        ),
+
+      comision:
+        kpiVentas(
+          t.comision,
+          ta.comision,
+          tb.comision,
+          habilitado
+        ),
+
+      unidadesTicket:
+        kpiVentas(
+          t.unidadesTicket,
+          ta.unidadesTicket,
+          tb.unidadesTicket,
+          habilitado
+        )
+
+    };
+
+
+    const trend =
+      tendencia(
+        x.visibles,
+        x.periodo
+      );
+
+
+    const giros =
+      rankingGiros(
+        x.visibles,
+        t.venta
+      );
+
+
+    const clientes =
+      rankingClientes(
+        x.visibles,
+        t.venta
+      );
+
+
+    const insights = [];
+
+
+    if (
+      !habilitado
+    ) {
+
+      insights.push({
+
+        tipo:
+          'info',
+
+        titulo:
+          'Jornada abierta',
+
+        texto:
+          'La venta de hoy se muestra en tiempo real. El comparativo diario se habilita después de las 7:00 p. m.'
+
+      });
+
+    }
+
+    else if (
+      kpis.venta.variacion !== null
+    ) {
+
+      if (
+        kpis.venta.variacion >= 5
+      ) {
+
+        insights.push({
+
+          tipo:
+            'positivo',
+
+          titulo:
+            'Venta por encima del comparativo',
+
+          texto:
+            'La venta del periodo comparable creció ' +
+            pctTexto(
+              kpis.venta.variacion
+            ) +
+            ' frente a ' +
+            x.periodo.etiquetaAnterior +
+            '.'
+
+        });
+
+      }
+
+      else if (
+        kpis.venta.variacion <= -5
+      ) {
+
+        insights.push({
+
+          tipo:
+            'advertencia',
+
+          titulo:
+            'Venta por debajo del comparativo',
+
+          texto:
+            'La venta del periodo comparable está ' +
+            pctTexto(
+              Math.abs(
+                kpis.venta.variacion
+              )
+            ) +
+            ' por debajo de ' +
+            x.periodo.etiquetaAnterior +
+            '.'
+
+        });
+
+      }
+
+    }
+
+
+    if (
+      trend.length
+    ) {
+
+      const mejor =
+        trend
+          .slice()
+          .sort(
+            (a, b) =>
+              b.venta -
+              a.venta
+          )[0];
+
+
+      insights.push({
+
+        tipo:
+          'positivo',
+
+        titulo:
+          'Pico de venta del periodo',
+
+        texto:
+          mejor.label +
+          ' es el punto con mayor venta: ' +
+          monedaTexto(
+            mejor.venta
+          ) +
+          '.'
+
+      });
+
+    }
+
+
+    if (
+      giros.length
+    ) {
+
+      insights.push({
+
+        tipo:
+          'info',
+
+        titulo:
+          'Giro con mayor peso',
+
+        texto:
+          giros[0].giro +
+          ' representa ' +
+          pctTexto(
+            giros[0].participacion
+          ) +
+          ' de la venta del periodo.'
+
+      });
+
+    }
+
+
+    return {
+
+      ok:
+        true,
+
+      sinDatos:
+        false,
+
+      generado:
+        LOCAL.paquete.generado,
+
+      periodo:
+        x.periodo,
+
+      kpis:
+        kpis,
+
+      tendencia:
+        trend,
+
+      mezcla: {
+
+        agua:
+          red(
+            t.agua
+          ),
+
+        superIce:
+          red(
+            t.superIce
+          )
+
+      },
+
+      giros:
+        giros,
+
+      clientes:
+        clientes,
+
+      insights:
+        insights.slice(
+          0,
+          5
+        ),
+
+      catalogos:
+        LOCAL.paquete.catalogos,
+
+      meta: {
+
+        registrosPeriodo:
+          x.visibles.length,
+
+        fuenteDatos:
+          'memoria local'
+
+      }
+
+    };
+
+  }
+
+
+  // ==========================================================================
+  // VENDEDORES
+  // ==========================================================================
+
+  function tablaVendedores(
+    visibles,
+    actualComp,
+    anteriorComp,
+    habilitado
+  ) {
+
+    const a =
+      agruparCampo(
+        visibles,
+        'vendedorId',
+        'vendedor'
+      );
+
+    const ac =
+      agruparCampo(
+        actualComp,
+        'vendedorId',
+        'vendedor'
+      );
+
+    const ant =
+      agruparCampo(
+        anteriorComp,
+        'vendedorId',
+        'vendedor'
+      );
+
+
+    const ventaTotal =
+      Object
+        .values(
+          a
+        )
+        .reduce(
+          (suma, x) =>
+            suma +
+            x.venta,
+          0
+        );
+
+
+    return Object
+      .keys(
+        a
+      )
+      .map(
+        key => {
+
+          const x =
+            a[key];
+
+          const xa =
+            ac[key] ||
+            {
+              venta:
+                0
+            };
+
+          const xb =
+            ant[key] ||
+            {
+              venta:
+                0
+            };
+
+
+          return {
+
+            vendedorId:
+              key,
+
+            vendedor:
+              x.nombre,
+
+            venta:
+              red(
+                x.venta
+              ),
+
+            agua:
+              red(
+                x.agua
+              ),
+
+            superIce:
+              red(
+                x.superIce
+              ),
+
+            comision:
+              red(
+                x.comision
+              ),
+
+            tickets:
+              x.tickets.size,
+
+            clientes:
+              x.clientes.size,
+
+            ticketPromedio:
+              x.tickets.size
+                ? red(
+                    x.venta /
+                    x.tickets.size
+                  )
+                : 0,
+
+            ventaCliente:
+              x.clientes.size
+                ? red(
+                    x.venta /
+                    x.clientes.size
+                  )
+                : 0,
+
+            participacion:
+              ventaTotal
+                ? red(
+                    x.venta /
+                    ventaTotal *
+                    100
+                  )
+                : 0,
+
+            variacion:
+              habilitado
+                ? variacion(
+                    xa.venta,
+                    xb.venta
+                  )
+                : null
+
+          };
+
+        }
+      )
+      .sort(
+        (a, b) =>
+          b.venta -
+          a.venta
+      );
+
+  }
+
+
+  function dataVendedores() {
+
+    const x =
+      obtenerConjuntos();
+
+
+    const tabla =
+      tablaVendedores(
+        x.visibles,
+        x.actualComp,
+        x.anteriorComp,
+        x.periodo.comparacionHabilitada
+      );
+
+
+    const t =
+      totales(
+        x.visibles
+      );
+
+    const ta =
+      totales(
+        x.actualComp
+      );
+
+    const tb =
+      totales(
+        x.anteriorComp
+      );
+
+
+    const vendedoresConVenta =
+      tabla.filter(
+        v =>
+          v.venta > 0
+      ).length;
+
+
+    const ventaPromedio =
+      vendedoresConVenta
+        ? red(
+            t.venta /
+            vendedoresConVenta
+          )
+        : 0;
+
+
+    const kpis = {
+
+      vendedores:
+        vendedoresConVenta,
+
+      venta:
+        kpiVentas(
+          t.venta,
+          ta.venta,
+          tb.venta,
+          x.periodo.comparacionHabilitada
+        ),
+
+      ventaPromedio:
+        ventaPromedio,
+
+      tickets:
+        kpiVentas(
+          t.tickets,
+          ta.tickets,
+          tb.tickets,
+          x.periodo.comparacionHabilitada
+        ),
+
+      clientes:
+        kpiVentas(
+          t.clientes,
+          ta.clientes,
+          tb.clientes,
+          x.periodo.comparacionHabilitada
+        ),
+
+      ticketPromedio:
+        kpiVentas(
+          t.ticketPromedio,
+          ta.ticketPromedio,
+          tb.ticketPromedio,
+          x.periodo.comparacionHabilitada
+        ),
+
+      agua:
+        kpiVentas(
+          t.agua,
+          ta.agua,
+          tb.agua,
+          x.periodo.comparacionHabilitada
+        ),
+
+      comision:
+        kpiVentas(
+          t.comision,
+          ta.comision,
+          tb.comision,
+          x.periodo.comparacionHabilitada
+        )
+
+    };
+
+
+    const insights = [];
+
+
+    if (
+      tabla.length
+    ) {
+
+      const top =
+        tabla[0];
+
+
+      insights.push({
+
+        tipo:
+          'positivo',
+
+        titulo:
+          'Mayor venta del periodo',
+
+        texto:
+          top.vendedor +
+          ' encabeza la venta con ' +
+          monedaTexto(
+            top.venta
+          ) +
+          '.'
+
+      });
+
+    }
+
+
+    const caidas =
+      tabla
+        .filter(
+          v =>
+            v.variacion !== null &&
+            v.variacion <= -10
+        )
+        .sort(
+          (a, b) =>
+            a.variacion -
+            b.variacion
+        );
+
+
+    if (
+      caidas.length
+    ) {
+
+      insights.push({
+
+        tipo:
+          'advertencia',
+
+        titulo:
+          'Caída relevante',
+
+        texto:
+          caidas[0].vendedor +
+          ' presenta una variación de ' +
+          pctTexto(
+            caidas[0].variacion
+          ) +
+          '.'
+
+      });
+
+    }
+
+
+    return {
+
+      ok:
+        true,
+
+      sinDatos:
+        false,
+
+      generado:
+        LOCAL.paquete.generado,
+
+      periodo:
+        x.periodo,
+
+      kpis:
+        kpis,
+
+      vendedores:
+        tabla,
+
+      grafica:
+        tabla
+          .slice(
+            0,
+            10
+          )
+          .map(
+            v => ({
+
+              vendedor:
+                v.vendedor,
+
+              venta:
+                v.venta,
+
+              clientes:
+                v.clientes,
+
+              tickets:
+                v.tickets
+
+            })
+          ),
+
+      insights:
+        insights,
+
+      catalogos:
+        LOCAL.paquete.catalogos
+
+    };
+
+  }
+
+
+  // ==========================================================================
+  // RENDER LOCAL
+  // ==========================================================================
+
+  function renderLocal(
+    modulo
+  ) {
+
+    if (
+      !soportadoLocalmente()
+    ) {
+
+      return false;
+
+    }
+
+
+    let data;
+
+
+    if (
+      modulo ===
+      'resumen'
+    ) {
+
+      data =
+        dataResumen();
+
+    }
+
+    else if (
+      modulo ===
+      'ventas'
+    ) {
+
+      data =
+        dataVentas();
+
+    }
+
+    else if (
+      modulo ===
+      'vendedores'
+    ) {
+
+      data =
+        dataVendedores();
+
+    }
+
+    else {
+
+      return false;
+
+    }
+
+
+    mostrarLoading(
+      false
+    );
+
+
+    atlasRenderModulo(
+      modulo,
+      data
+    );
+
+
+    return true;
+
+  }
+
+
+  // ============================================================================
+  // CARGA INICIAL · V2.1
+  // ============================================================================
+  //
+  // La primera versión arrancaba el paquete local apenas abría Atlas.
+  // Eso competía con la carga inicial de Resumen. Ahora Resumen aparece primero
+  // y SOLO DESPUÉS se prepara el paquete local en segundo plano.
+  // ============================================================================
+
+  let precargaPendiente = null;
+  let filtroPendiente = false;
+
+  const programarPrecargaOriginal =
+    window.atlasProgramarPrecarga;
+
+  const renderResumenOriginal =
+    window.renderResumen;
+
+
+  function periodoElegidoPuedeSerLocal() {
+
+    const tipo =
+      valor(
+        'filtroPeriodo'
+      ) ||
+      'mes';
+
+    return [
+      'hoy',
+      'semana_anterior',
+      'mes_anterior',
+      'mes'
+    ].includes(
+      tipo
+    );
+
+  }
+
+
+  function reanudarPrecargaNormal() {
+
+    if (
+      typeof programarPrecargaOriginal !==
+      'function'
+    ) {
+      return;
+    }
+
+    const excluidos =
+      precargaPendiente ||
+      [
+        moduloActual
+      ];
+
+    precargaPendiente =
+      null;
+
+    setTimeout(
+      function() {
+
+        programarPrecargaOriginal(
+          excluidos
+        );
+
+      },
+      180
+    );
+
+  }
+
+
+  function iniciarPaquete() {
+
+    if (
+      LOCAL.cargando ||
+      LOCAL.listo
+    ) {
+      return;
+    }
+
+    LOCAL.cargando =
+      true;
+
+    if (
+      typeof atlasSetPreloadStatus ===
+      'function'
+    ) {
+
+      atlasSetPreloadStatus(
+        'Preparando filtros rápidos',
+        'loading',
+        true
+      );
+
+    }
+
+    google.script.run
+
+      .withSuccessHandler(
+        function(data) {
+
+          LOCAL.cargando =
+            false;
+
+          if (
+            !data ||
+            !data.ok
+          ) {
+
+            LOCAL.error =
+              data?.mensaje ||
+              'No fue posible preparar Atlas local.';
+
+            console.warn(
+              LOCAL.error
+            );
+
+            if (
+              typeof atlasSetPreloadStatus ===
+              'function'
+            ) {
+
+              atlasSetPreloadStatus(
+                'Atlas continuará con carga normal',
+                'partial',
+                true
+              );
+
+            }
+
+            reanudarPrecargaNormal();
+            return;
+
+          }
+
+          LOCAL.paquete =
+            data;
+
+          LOCAL.listo =
+            true;
+
+          if (
+            typeof atlasSetPreloadStatus ===
+            'function'
+          ) {
+
+            atlasSetPreloadStatus(
+              'Filtros rápidos listos',
+              'ready',
+              true
+            );
+
+          }
+
+          if (
+            filtroPendiente &&
+            [
+              'resumen',
+              'ventas',
+              'vendedores'
+            ].includes(
+              moduloActual
+            ) &&
+            soportadoLocalmente()
+          ) {
+
+            filtroPendiente =
+              false;
+
+            renderLocal(
+              moduloActual
+            );
+
+          }
+
+          reanudarPrecargaNormal();
+
+        }
+      )
+
+      .withFailureHandler(
+        function(error) {
+
+          LOCAL.cargando =
+            false;
+
+          LOCAL.error =
+            error?.message ||
+            String(
+              error
+            );
+
+          console.warn(
+            'Atlas local:',
+            LOCAL.error
+          );
+
+          if (
+            typeof atlasSetPreloadStatus ===
+            'function'
+          ) {
+
+            atlasSetPreloadStatus(
+              'Atlas continuará con carga normal',
+              'partial',
+              true
+            );
+
+          }
+
+          reanudarPrecargaNormal();
+
+        }
+      )
+
+      .WEB_getAtlasVentasLocalPackage();
+
+  }
+
+
+  // ============================================================================
+  // EVITAR QUE LA PRECARGA GENERAL COMPITA CON EL PAQUETE LOCAL
+  // ============================================================================
+
+  if (
+    typeof programarPrecargaOriginal ===
+    'function'
+  ) {
+
+    window.atlasProgramarPrecarga =
+      function(
+        excluirModulos
+      ) {
+
+        if (
+          !LOCAL.listo
+        ) {
+
+          precargaPendiente =
+            Array.isArray(
+              excluirModulos
+            )
+              ? excluirModulos.slice()
+              : [];
+
+          return;
+
+        }
+
+        programarPrecargaOriginal(
+          excluirModulos
+        );
+
+      };
+
+  }
+
+
+  // ============================================================================
+  // RESUMEN PRIMERO, PAQUETE DESPUÉS
+  // ============================================================================
+
+  if (
+    typeof renderResumenOriginal ===
+    'function'
+  ) {
+
+    window.renderResumen =
+      function(
+        data
+      ) {
+
+        renderResumenOriginal(
+          data
+        );
+
+        if (
+          !LOCAL.listo &&
+          !LOCAL.cargando
+        ) {
+
+          setTimeout(
+            iniciarPaquete,
+            120
+          );
+
+        }
+
+      };
+
+  }
+
+
+  // ============================================================================
+  // INTERCEPTAR CAMBIOS DE FILTRO
+  // ============================================================================
+
+  function cambioFiltroLocal(
+    event
+  ) {
+
+    if (
+      ![
+        'resumen',
+        'ventas',
+        'vendedores'
+      ].includes(
+        moduloActual
+      )
+    ) {
+      return;
+    }
+
+    if (
+      !periodoElegidoPuedeSerLocal()
+    ) {
+      return;
+    }
+
+    if (
+      LOCAL.listo &&
+      soportadoLocalmente()
+    ) {
+
+      event.stopImmediatePropagation();
+
+      renderLocal(
+        moduloActual
+      );
+
+      return;
+
+    }
+
+    if (
+      LOCAL.cargando
+    ) {
+
+      event.stopImmediatePropagation();
+
+      filtroPendiente =
+        true;
+
+      if (
+        typeof atlasSetPreloadStatus ===
+        'function'
+      ) {
+
+        atlasSetPreloadStatus(
+          'Terminando filtros rápidos',
+          'loading',
+          true
+        );
+
+      }
+
+    }
+
+  }
+
+
+  [
+    'filtroRuta',
+    'filtroVendedor',
+    'filtroGiro',
+    'filtroPeriodo'
+  ]
+    .forEach(
+      id => {
+
+        const el =
+          document.getElementById(
+            id
+          );
+
+        if (el) {
+
+          el.addEventListener(
+            'change',
+            cambioFiltroLocal,
+            true
+          );
+
+        }
+
+      }
+    );
+
+
+  // ============================================================================
+  // CARGADORES PÚBLICOS
+  // ============================================================================
+
+  const originales = {
+
+    resumen:
+      window.cargarResumen,
+
+    ventas:
+      window.cargarVentas,
+
+    vendedores:
+      window.cargarVendedores
+
+  };
+
+
+  window.cargarResumen =
+    function() {
+
+      if (
+        !renderLocal(
+          'resumen'
+        )
+      ) {
+
+        originales.resumen();
+
+      }
+
+    };
+
+
+  window.cargarVentas =
+    function() {
+
+      if (
+        !renderLocal(
+          'ventas'
+        )
+      ) {
+
+        originales.ventas();
+
+      }
+
+    };
+
+
+  window.cargarVendedores =
+    function() {
+
+      if (
+        !renderLocal(
+          'vendedores'
+        )
+      ) {
+
+        originales.vendedores();
+
+      }
+
+    };
+
+
+  // No arrancamos el paquete aquí.
+  // La carga inicia después de que renderResumen() termina por primera vez.
+
+
+})();
+</script>
