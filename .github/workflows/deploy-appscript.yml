@@ -1,0 +1,60 @@
+name: Deploy Reparto 2026 to Apps Script
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: reparto-2026-appscript-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install clasp
+        run: npm install -g @google/clasp
+
+      - name: Configure clasp credentials
+        env:
+          CLASP_CREDENTIALS: ${{ secrets.CLASP_CREDENTIALS }}
+        run: |
+          test -n "$CLASP_CREDENTIALS" || (echo "Missing CLASP_CREDENTIALS secret" && exit 1)
+          printf '%s' "$CLASP_CREDENTIALS" > "$HOME/.clasprc.json"
+
+      - name: Pull current Apps Script project
+        env:
+          APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+        run: |
+          test -n "$APPS_SCRIPT_ID" || (echo "Missing APPS_SCRIPT_ID secret" && exit 1)
+          mkdir -p /tmp/reparto-remote
+          cd /tmp/reparto-remote
+          printf '{"scriptId":"%s","rootDir":"."}\n' "$APPS_SCRIPT_ID" > .clasp.json
+          clasp pull
+
+      - name: Overlay repository files safely
+        run: |
+          for f in "$GITHUB_WORKSPACE"/*.js "$GITHUB_WORKSPACE"/*.gs "$GITHUB_WORKSPACE"/*.html "$GITHUB_WORKSPACE"/*.json; do
+            [ -e "$f" ] || continue
+            base="$(basename "$f")"
+            if [ "$base" = ".clasp.json" ]; then
+              continue
+            fi
+            cp "$f" "/tmp/reparto-remote/$base"
+          done
+
+      - name: Push safe mirror to Apps Script
+        run: |
+          cd /tmp/reparto-remote
+          clasp push --force
