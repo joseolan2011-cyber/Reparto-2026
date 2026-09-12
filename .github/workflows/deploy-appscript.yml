@@ -48,12 +48,13 @@ jobs:
         run: |
           test -f "$GITHUB_WORKSPACE/MonitorPedidos.gs" || (echo "MonitorPedidos.gs not found" && exit 1)
           SHORT_SHA="${GITHUB_SHA::8}"
+          rm -f /tmp/reparto-remote/MonitorPedidos.js /tmp/reparto-remote/MonitorPedidos.gs
           {
             echo "// DEPLOY_VERSION: REPARTO-MONITOR-${SHORT_SHA}"
             echo "// DEPLOYED_FROM_GITHUB: ${GITHUB_SHA}"
             echo
             cat "$GITHUB_WORKSPACE/MonitorPedidos.gs"
-          } > /tmp/reparto-remote/MonitorPedidos.gs
+          } > /tmp/reparto-remote/MonitorPedidos.js
 
       - name: Push safe mirror to Apps Script
         run: |
