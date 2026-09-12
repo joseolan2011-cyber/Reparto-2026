@@ -9,20 +9,21 @@
  *   PEDIDO
  *   PEDIDO_COMPLETO
  *
- * SALUDO, ASESOR, PROMOCION, CONSULTA, AGRADECIMIENTO, etc. NO generan alertas.
- *
- * Reglas:
- * - Si aparece IDPedido, el intento se considera terminado correctamente.
- * - Si pasan MONITOR_MINUTOS_ALERTA (default 5) sin IDPedido, envía Pushover.
- * - Si pasan MONITOR_MINUTOS_CRITICO (default 10) sin IDPedido, envía alerta crítica.
- * - Si después de una alerta aparece IDPedido, envía notificación de recuperación.
- * - MONITOR_PEDIDOS guarda el estado para no repetir alertas.
- *
- * Script Properties requeridas:
- *   PUSHOVER_USER_KEY
- *   PUSHOVER_API_TOKEN
- *   MONITOR_MINUTOS_ALERTA   (opcional, default 5)
- *   MONITOR_MINUTOS_CRITICO  (opcional, default 10)
+ * MONITOR_PEDIDOS columnas A:N:
+ * A telefono
+ * B nombre
+ * C inicio
+ * D ultima_actividad
+ * E cantidad_webhooks
+ * F ultimo_mensaje
+ * G ultima_eleccion_gpt
+ * H ultima_salida
+ * I ultima_conversacion
+ * J IDPedido
+ * K estado
+ * L alerta_5min_enviada
+ * M alerta_10min_enviada
+ * N recuperado_notificado
  */
 
 const MONITOR_PEDIDOS_CONFIG = {
@@ -47,7 +48,6 @@ function monitorPedidos() {
     if (!shEntradas) throw new Error('No existe la hoja ENTRADASWEBOOK.');
     if (!shMonitor) throw new Error('No existe la hoja MONITOR_PEDIDOS.');
 
-    // Limpia falsos positivos creados durante pruebas anteriores.
     monitorLimpiarNoPedidos_(shMonitor);
 
     const props = PropertiesService.getScriptProperties();
@@ -63,8 +63,6 @@ function monitorPedidos() {
 
     Object.keys(intentos).forEach(telefono => {
       const intento = intentos[telefono];
-
-      // Doble protección: jamás procesar una interacción que no haya sido pedido.
       if (!intento.tieneIntentoPedido) return;
 
       monitorProcesarIntento_(
@@ -173,11 +171,7 @@ function monitorConstruirUltimoIntentoPorTelefono_(eventos) {
     if (actual.length) intentos.push(actual);
 
     const resumen = monitorResumirIntento_(telefono, intentos[intentos.length - 1]);
-
-    // Solo incorporamos teléfonos cuyo intento más reciente realmente fue pedido.
-    if (resumen.tieneIntentoPedido) {
-      resultado[telefono] = resumen;
-    }
+    if (resumen.tieneIntentoPedido) resultado[telefono] = resumen;
   });
 
   return resultado;
@@ -232,17 +226,18 @@ function monitorLeerEstado_(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return map;
 
-  const rows = sheet.getRange(2, 1, lastRow - 1, 13).getValues();
+  const rows = sheet.getRange(2, 1, lastRow - 1, 14).getValues();
+
   rows.forEach((r, i) => {
     const telefono = monitorNormalizarTelefono_(r[0]);
     if (!telefono) return;
 
     map[telefono] = {
       fila: i + 2,
-      inicio: monitorFecha_(r[1]),
-      alerta5: monitorBool_(r[10]),
-      alerta10: monitorBool_(r[11]),
-      recuperado: monitorBool_(r[12])
+      inicio: monitorFecha_(r[2]),
+      alerta5: monitorBool_(r[11]),
+      alerta10: monitorBool_(r[12]),
+      recuperado: monitorBool_(r[13])
     };
   });
 
@@ -317,23 +312,23 @@ function monitorLimpiarNoPedidos_(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
 
-  const rows = sheet.getRange(2, 1, lastRow - 1, 13).getValues();
+  const rows = sheet.getRange(2, 1, lastRow - 1, 14).getValues();
   const conservar = [];
 
   rows.forEach(r => {
     const telefono = monitorNormalizarTelefono_(r[0]);
     if (!telefono) return;
 
-    const eleccion = monitorNormalizarEleccion_(r[5]);
+    const eleccion = monitorNormalizarEleccion_(r[6]);
     if (MONITOR_PEDIDOS_CONFIG.ELECCIONES_PEDIDO.includes(eleccion)) {
       conservar.push(r);
     }
   });
 
-  sheet.getRange(2, 1, Math.max(lastRow - 1, 1), 13).clearContent();
+  sheet.getRange(2, 1, Math.max(lastRow - 1, 1), 14).clearContent();
 
   if (conservar.length) {
-    sheet.getRange(2, 1, conservar.length, 13).setValues(conservar);
+    sheet.getRange(2, 1, conservar.length, 14).setValues(conservar);
   }
 }
 
@@ -351,8 +346,9 @@ function monitorBuscarFilaTelefono_(sheet, telefono) {
 }
 
 function monitorGuardarEstado_(sheet, fila, intento, estado, alerta5, alerta10, recuperado) {
-  sheet.getRange(fila, 1, 1, 13).setValues([[
+  sheet.getRange(fila, 1, 1, 14).setValues([[
     intento.telefono,
+    intento.nombre,
     intento.inicio,
     intento.ultimaActividad,
     intento.cantidadWebhooks,
