@@ -14,6 +14,12 @@
  *   PEDIDO
  *   PEDIDO_COMPLETO
  *
+ * Antes de alertar, también revisa la hoja PEDIDOS:
+ * - mismo teléfono
+ * - pedido de hoy
+ * - Fecha y hora_recibido >= inicio del intento
+ * - pedido_cancelado distinto de TRUE
+ *
  * MONITOR_PEDIDOS columnas A:N:
  * A telefono
  * B nombre
@@ -34,6 +40,7 @@
 const MONITOR_PEDIDOS_CONFIG = {
   HOJA_ENTRADAS: 'ENTRADASWEBOOK',
   HOJA_MONITOR: 'MONITOR_PEDIDOS',
+  HOJA_PEDIDOS: 'PEDIDOS',
   VENTANA_NUEVO_INTENTO_MIN: 30,
   MINUTOS_ACTIVIDAD_RECIENTE: 2,
   ELECCIONES_PEDIDO: ['PEDIDO', 'PEDIDO_COMPLETO'],
@@ -48,9 +55,11 @@ function monitorPedidos() {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const shEntradas = ss.getSheetByName(MONITOR_PEDIDOS_CONFIG.HOJA_ENTRADAS);
     const shMonitor = ss.getSheetByName(MONITOR_PEDIDOS_CONFIG.HOJA_MONITOR);
+    const shPedidos = ss.getSheetByName(MONITOR_PEDIDOS_CONFIG.HOJA_PEDIDOS);
 
     if (!shEntradas) throw new Error('No existe la hoja ENTRADASWEBOOK.');
     if (!shMonitor) throw new Error('No existe la hoja MONITOR_PEDIDOS.');
+    if (!shPedidos) throw new Error('No existe la hoja PEDIDOS.');
 
     // Antes de cualquier cálculo, elimina de la hoja de monitor todo lo que no sea de hoy
     // y cualquier falso positivo que no sea PEDIDO / PEDIDO_COMPLETO.
@@ -63,6 +72,9 @@ function monitorPedidos() {
     const eventos = monitorLeerEntradasDeHoy_(shEntradas);
     if (!eventos.length) return;
 
+    // Se lee PEDIDOS una sola vez por ciclo para evitar búsquedas repetidas en la hoja.
+    const pedidosHoyPorTelefono = monitorLeerPedidosDeHoy_(shPedidos);
+
     const intentos = monitorConstruirUltimoIntentoPorTelefono_(eventos);
     const estadoGuardado = monitorLeerEstado_(shMonitor);
     const ahora = new Date();
@@ -70,6 +82,20 @@ function monitorPedidos() {
     Object.keys(intentos).forEach(telefono => {
       const intento = intentos[telefono];
       if (!intento.tieneIntentoPedido) return;
+
+      // Si ENTRADASWEBOOK todavía no tiene IDPedido, revisa si el pedido ya existe en PEDIDOS.
+      if (!intento.idPedido) {
+        const pedidoEnPedidos = monitorBuscarPedidoPosterior_(
+          pedidosHoyPorTelefono[telefono] || [],
+          intento.inicio
+        );
+
+        if (pedidoEnPedidos) {
+          intento.idPedido = pedidoEnPedidos.idPedido;
+          intento.fechaPedido = pedidoEnPedidos.fechaRecibido;
+          intento.completadoDesdePedidos = true;
+        }
+      }
 
       monitorProcesarIntento_(
         shMonitor,
@@ -150,6 +176,80 @@ function monitorLeerEntradasDeHoy_(sheet) {
 
   eventos.sort((a, b) => a.fecha - b.fecha);
   return eventos;
+}
+
+/**
+ * Lee los pedidos válidos de HOY y los agrupa por teléfono.
+ * No transforma ni agrega prefijos a los teléfonos: usa el valor ya normalizado de la hoja.
+ */
+function monitorLeerPedidosDeHoy_(sheet) {
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 2) return {};
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone();
+  const hoyKey = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+
+  const data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+  const headers = data[0].map(h => String(h).trim());
+  const idx = {};
+  headers.forEach((h, i) => idx[h] = i);
+
+  ['id_pedido', 'telefono', 'fecha', 'Fecha y hora_recibido', 'pedido_cancelado']
+    .forEach(col => {
+      if (idx[col] === undefined) {
+        throw new Error('Falta la columna ' + col + ' en PEDIDOS.');
+      }
+    });
+
+  const porTelefono = {};
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+
+    const telefono = monitorTexto_(row[idx.telefono]);
+    if (!telefono) continue;
+
+    const fechaPedidoDia = monitorFecha_(row[idx.fecha]);
+    const fechaRecibido = monitorFecha_(row[idx['Fecha y hora_recibido']]);
+    if (!fechaPedidoDia || !fechaRecibido) continue;
+
+    const fechaKey = Utilities.formatDate(fechaPedidoDia, tz, 'yyyy-MM-dd');
+    if (fechaKey !== hoyKey) continue;
+
+    if (monitorBool_(row[idx.pedido_cancelado])) continue;
+
+    const idPedido = monitorTexto_(row[idx.id_pedido]);
+    if (!idPedido) continue;
+
+    if (!porTelefono[telefono]) porTelefono[telefono] = [];
+    porTelefono[telefono].push({
+      idPedido,
+      fechaRecibido
+    });
+  }
+
+  Object.keys(porTelefono).forEach(telefono => {
+    porTelefono[telefono].sort((a, b) => a.fechaRecibido - b.fechaRecibido);
+  });
+
+  return porTelefono;
+}
+
+/**
+ * Devuelve el primer pedido válido creado en PEDIDOS a partir del inicio del intento.
+ */
+function monitorBuscarPedidoPosterior_(pedidosTelefono, inicioIntento) {
+  if (!inicioIntento || !pedidosTelefono.length) return null;
+
+  for (let i = 0; i < pedidosTelefono.length; i++) {
+    if (pedidosTelefono[i].fechaRecibido >= inicioIntento) {
+      return pedidosTelefono[i];
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -238,7 +338,8 @@ function monitorResumirIntento_(telefono, eventos) {
     ultimaConversacion,
     idPedido,
     fechaPedido,
-    tieneIntentoPedido
+    tieneIntentoPedido,
+    completadoDesdePedidos: false
   };
 }
 
@@ -278,7 +379,9 @@ function monitorProcesarIntento_(sheet, previo, intento, ahora, minAlerta, minCr
   const minSinActividad = (ahora - intento.ultimaActividad) / 60000;
 
   if (intento.idPedido) {
-    let estado = 'COMPLETADO';
+    let estado = intento.completadoDesdePedidos
+      ? 'COMPLETADO_EN_PEDIDOS'
+      : 'COMPLETADO';
 
     if ((alerta5 || alerta10) && !recuperado) {
       const minHastaPedido = intento.fechaPedido
@@ -292,7 +395,9 @@ function monitorProcesarIntento_(sheet, previo, intento, ahora, minAlerta, minCr
       );
 
       recuperado = true;
-      estado = 'RECUPERADO';
+      estado = intento.completadoDesdePedidos
+        ? 'RECUPERADO_EN_PEDIDOS'
+        : 'RECUPERADO';
     }
 
     monitorGuardarEstado_(sheet, fila, intento, estado, alerta5, alerta10, recuperado);
@@ -471,6 +576,7 @@ function monitorMensajeRecuperado_(intento, minHastaPedido) {
   m += '✅ IDPedido: ' + intento.idPedido + '\n';
   m += '⏱️ Tiempo total: ' + monitorFormatearMinutos_(minHastaPedido) + '\n';
   m += '📥 Webhooks: ' + intento.cantidadWebhooks;
+  if (intento.completadoDesdePedidos) m += '\n📋 Confirmado en tabla PEDIDOS';
   if (intento.ultimaConversacion) m += '\n🧭 Conversación: ' + intento.ultimaConversacion;
   m += '\n\nLa interacción que había generado alerta terminó correctamente.';
   return m;
