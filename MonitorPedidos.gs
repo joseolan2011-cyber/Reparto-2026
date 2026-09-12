@@ -5,6 +5,12 @@
  * Vigila ENTRADASWEBOOK de forma independiente a Make/Treble.
  * Se monitorea por TELÉFONO, no por session_id.
  *
+ * SOLO se monitorean intentos donde GPT haya clasificado al menos un evento como:
+ *   PEDIDO
+ *   PEDIDO_COMPLETO
+ *
+ * SALUDO, ASESOR, PROMOCION, CONSULTA, AGRADECIMIENTO, etc. NO generan alertas.
+ *
  * Reglas:
  * - Si aparece IDPedido, el intento se considera terminado correctamente.
  * - Si pasan MONITOR_MINUTOS_ALERTA (default 5) sin IDPedido, envía Pushover.
@@ -25,6 +31,7 @@ const MONITOR_PEDIDOS_CONFIG = {
   VENTANA_NUEVO_INTENTO_MIN: 30,
   HORAS_HISTORICO: 24,
   MINUTOS_ACTIVIDAD_RECIENTE: 2,
+  ELECCIONES_PEDIDO: ['PEDIDO', 'PEDIDO_COMPLETO'],
   PUSHOVER_URL: 'https://api.pushover.net/1/messages.json'
 };
 
@@ -40,6 +47,9 @@ function monitorPedidos() {
     if (!shEntradas) throw new Error('No existe la hoja ENTRADASWEBOOK.');
     if (!shMonitor) throw new Error('No existe la hoja MONITOR_PEDIDOS.');
 
+    // Limpia falsos positivos creados durante pruebas anteriores.
+    monitorLimpiarNoPedidos_(shMonitor);
+
     const props = PropertiesService.getScriptProperties();
     const minAlerta = Number(props.getProperty('MONITOR_MINUTOS_ALERTA') || 5);
     const minCritico = Number(props.getProperty('MONITOR_MINUTOS_CRITICO') || 10);
@@ -52,10 +62,15 @@ function monitorPedidos() {
     const ahora = new Date();
 
     Object.keys(intentos).forEach(telefono => {
+      const intento = intentos[telefono];
+
+      // Doble protección: jamás procesar una interacción que no haya sido pedido.
+      if (!intento.tieneIntentoPedido) return;
+
       monitorProcesarIntento_(
         shMonitor,
         estadoGuardado[telefono] || null,
-        intentos[telefono],
+        intento,
         ahora,
         minAlerta,
         minCritico
@@ -125,6 +140,7 @@ function monitorLeerEntradasRecientes_(sheet) {
 
 function monitorConstruirUltimoIntentoPorTelefono_(eventos) {
   const porTelefono = {};
+
   eventos.forEach(e => {
     if (!porTelefono[e.telefono]) porTelefono[e.telefono] = [];
     porTelefono[e.telefono].push(e);
@@ -155,7 +171,13 @@ function monitorConstruirUltimoIntentoPorTelefono_(eventos) {
     });
 
     if (actual.length) intentos.push(actual);
-    resultado[telefono] = monitorResumirIntento_(telefono, intentos[intentos.length - 1]);
+
+    const resumen = monitorResumirIntento_(telefono, intentos[intentos.length - 1]);
+
+    // Solo incorporamos teléfonos cuyo intento más reciente realmente fue pedido.
+    if (resumen.tieneIntentoPedido) {
+      resultado[telefono] = resumen;
+    }
   });
 
   return resultado;
@@ -169,6 +191,7 @@ function monitorResumirIntento_(telefono, eventos) {
   let ultimaConversacion = '';
   let idPedido = '';
   let fechaPedido = null;
+  let tieneIntentoPedido = false;
 
   eventos.forEach(e => {
     if (e.nombre) nombre = e.nombre;
@@ -176,6 +199,12 @@ function monitorResumirIntento_(telefono, eventos) {
     if (e.eleccionGPT) ultimaEleccionGPT = e.eleccionGPT;
     if (e.salida) ultimaSalida = e.salida;
     if (e.conversacion) ultimaConversacion = e.conversacion;
+
+    const eleccionNormalizada = monitorNormalizarEleccion_(e.eleccionGPT);
+    if (MONITOR_PEDIDOS_CONFIG.ELECCIONES_PEDIDO.includes(eleccionNormalizada)) {
+      tieneIntentoPedido = true;
+    }
+
     if (!idPedido && e.idPedido) {
       idPedido = e.idPedido;
       fechaPedido = e.fecha;
@@ -193,7 +222,8 @@ function monitorResumirIntento_(telefono, eventos) {
     ultimaSalida,
     ultimaConversacion,
     idPedido,
-    fechaPedido
+    fechaPedido,
+    tieneIntentoPedido
   };
 }
 
@@ -223,7 +253,7 @@ function monitorProcesarIntento_(sheet, previo, intento, ahora, minAlerta, minCr
   const nuevoIntento = !previo || !previo.inicio ||
     Math.abs(intento.inicio.getTime() - previo.inicio.getTime()) > 60000;
 
-  let fila = previo ? previo.fila : monitorBuscarFilaTelefono_(sheet, intento.telefono);
+  const fila = previo ? previo.fila : monitorBuscarFilaTelefono_(sheet, intento.telefono);
   let alerta5 = nuevoIntento ? false : previo.alerta5;
   let alerta10 = nuevoIntento ? false : previo.alerta10;
   let recuperado = nuevoIntento ? false : previo.recuperado;
@@ -283,11 +313,39 @@ function monitorProcesarIntento_(sheet, previo, intento, ahora, minAlerta, minCr
   monitorGuardarEstado_(sheet, fila, intento, estado, alerta5, alerta10, recuperado);
 }
 
+function monitorLimpiarNoPedidos_(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const rows = sheet.getRange(2, 1, lastRow - 1, 13).getValues();
+  const conservar = [];
+
+  rows.forEach(r => {
+    const telefono = monitorNormalizarTelefono_(r[0]);
+    if (!telefono) return;
+
+    const eleccion = monitorNormalizarEleccion_(r[5]);
+    if (MONITOR_PEDIDOS_CONFIG.ELECCIONES_PEDIDO.includes(eleccion)) {
+      conservar.push(r);
+    }
+  });
+
+  sheet.getRange(2, 1, Math.max(lastRow - 1, 1), 13).clearContent();
+
+  if (conservar.length) {
+    sheet.getRange(2, 1, conservar.length, 13).setValues(conservar);
+  }
+}
+
 function monitorBuscarFilaTelefono_(sheet, telefono) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return 2;
 
-  const nums = sheet.getRange(2, 1, lastRow - 1, 1).getValues().flat().map(monitorNormalizarTelefono_);
+  const nums = sheet.getRange(2, 1, lastRow - 1, 1)
+    .getValues()
+    .flat()
+    .map(monitorNormalizarTelefono_);
+
   const i = nums.indexOf(telefono);
   return i >= 0 ? i + 2 : lastRow + 1;
 }
@@ -330,15 +388,13 @@ function monitorEnviarPushover_(titulo, mensaje, prioridad) {
     message: String(mensaje || '')
   };
 
-  // Para prioridad normal (0), Pushover no necesita el parámetro.
-  // Lo omitimos para evitar que Apps Script lo serialice de forma inválida.
   if (prioridadValida !== 0) {
     payload.priority = String(prioridadValida);
   }
 
   const resp = UrlFetchApp.fetch(MONITOR_PEDIDOS_CONFIG.PUSHOVER_URL, {
     method: 'post',
-    payload: payload,
+    payload,
     muteHttpExceptions: true
   });
 
@@ -417,6 +473,10 @@ function eliminarTriggerMonitorPedidos() {
 function monitorNormalizarTelefono_(v) {
   if (v === null || v === undefined || v === '') return '';
   return String(v).replace(/\D/g, '').trim();
+}
+
+function monitorNormalizarEleccion_(v) {
+  return String(v || '').trim().toUpperCase();
 }
 
 function monitorFecha_(v) {
