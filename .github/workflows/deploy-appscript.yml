@@ -44,7 +44,7 @@ jobs:
           printf '{"scriptId":"%s","rootDir":"."}\n' "$APPS_SCRIPT_ID" > .clasp.json
           clasp pull
 
-      - name: Overlay only MonitorPedidos with deploy version
+      - name: Overlay MonitorPedidos with deploy version
         run: |
           test -f "$GITHUB_WORKSPACE/MonitorPedidos.gs" || (echo "MonitorPedidos.gs not found" && exit 1)
           SHORT_SHA="${GITHUB_SHA::8}"
@@ -55,6 +55,45 @@ jobs:
             echo
             cat "$GITHUB_WORKSPACE/MonitorPedidos.gs"
           } > /tmp/reparto-remote/MonitorPedidos.js
+
+      - name: Integrate monitorPedidos into central trigger
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path('/tmp/reparto-remote')
+          candidates = list(root.glob('SYNC_CARGAS_OPSU*.js')) + list(root.glob('SYNC_CARGAS_OPSU*.gs'))
+          if not candidates:
+              raise SystemExit('SYNC_CARGAS_OPSU file not found after clasp pull')
+
+          path = candidates[0]
+          text = path.read_text(encoding='utf-8')
+
+          # 1) Insert monitorPedidos() into the existing central minute monitor.
+          if 'MONITOR PEDIDOS WHATSAPP' not in text:
+              marker = """  // --------------------------------------------------------------------------\n  // CARGAS OPSU\n  // --------------------------------------------------------------------------\n"""
+              block = """  // --------------------------------------------------------------------------\n  // MONITOR PEDIDOS WHATSAPP\n  // --------------------------------------------------------------------------\n\n  try {\n\n    monitorPedidos();\n\n  } catch (error) {\n\n    console.error(\n      'MONITOR CENTRAL - error en monitorPedidos: ' +\n      error.stack\n    );\n\n  }\n\n\n"""
+              if marker not in text:
+                  raise SystemExit('Could not find CARGAS OPSU marker in MONITOREO_CENTRAL_cadaMinuto')
+              text = text.replace(marker, block + marker, 1)
+
+          # 2) Ensure installer removes any old independent monitorPedidos trigger.
+          if "handler ===\n            'monitorPedidos'" not in text and "handler === 'monitorPedidos'" not in text:
+              old = """          handler ===\n            'ejecutarMonitoreosCadaMinuto' ||\n          handler ===\n            'CARGAS_OPSU_monitoreoCadaMinuto' ||\n"""
+              new = """          handler ===\n            'ejecutarMonitoreosCadaMinuto' ||\n          handler ===\n            'monitorPedidos' ||\n          handler ===\n            'CARGAS_OPSU_monitoreoCadaMinuto' ||\n"""
+              if old not in text:
+                  raise SystemExit('Could not find trigger cleanup block in CARGAS_OPSU_instalarMonitoreo1Minuto')
+              text = text.replace(old, new, 1)
+
+          # 3) Keep the central-monitor sequence comments accurate.
+          text = text.replace(
+              "//   1. Ejecuta el monitor existente de pedidos.\n//   2. Ejecuta la sincronización OPSU -> Reparto.",
+              "//   1. Ejecuta los monitoreos existentes del proyecto.\n//   2. Ejecuta monitorPedidos() (watchdog ENTRADASWEBOOK -> PEDIDOS).\n//   3. Ejecuta la sincronización OPSU -> Reparto."
+          )
+
+          path.write_text(text, encoding='utf-8')
+          print(f'Central monitor patched safely in {path.name}')
+          PY
 
       - name: Push safe mirror to Apps Script
         run: |
