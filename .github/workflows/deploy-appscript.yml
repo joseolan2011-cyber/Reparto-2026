@@ -38,21 +38,16 @@ jobs:
           APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
         run: |
           test -n "$APPS_SCRIPT_ID" || (echo "Missing APPS_SCRIPT_ID secret" && exit 1)
+          rm -rf /tmp/reparto-remote
           mkdir -p /tmp/reparto-remote
           cd /tmp/reparto-remote
           printf '{"scriptId":"%s","rootDir":"."}\n' "$APPS_SCRIPT_ID" > .clasp.json
           clasp pull
 
-      - name: Overlay repository files safely
+      - name: Overlay only MonitorPedidos
         run: |
-          for f in "$GITHUB_WORKSPACE"/*.js "$GITHUB_WORKSPACE"/*.gs "$GITHUB_WORKSPACE"/*.html "$GITHUB_WORKSPACE"/*.json; do
-            [ -e "$f" ] || continue
-            base="$(basename "$f")"
-            if [ "$base" = ".clasp.json" ]; then
-              continue
-            fi
-            cp "$f" "/tmp/reparto-remote/$base"
-          done
+          test -f "$GITHUB_WORKSPACE/MonitorPedidos.gs" || (echo "MonitorPedidos.gs not found" && exit 1)
+          cp "$GITHUB_WORKSPACE/MonitorPedidos.gs" /tmp/reparto-remote/MonitorPedidos.gs
 
       - name: Push safe mirror to Apps Script
         run: |
