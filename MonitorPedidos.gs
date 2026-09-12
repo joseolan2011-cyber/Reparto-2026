@@ -7,17 +7,17 @@
  *
  * REGLA DE ALCANCE:
  * - SOLO trabaja con eventos del DÍA DE HOY según la zona horaria de la hoja.
- * - Por cada teléfono conserva únicamente el intento MÁS RECIENTE de hoy.
- * - No lee ni alerta pedidos de ayer ni de días anteriores.
+ * - Por cada teléfono conserva únicamente la interacción MÁS RECIENTE de hoy.
+ * - No lee ni alerta conversaciones de ayer ni de días anteriores.
  *
- * SOLO se monitorean intentos donde GPT haya clasificado al menos un evento como:
- *   PEDIDO
- *   PEDIDO_COMPLETO
+ * VIGILA DOS CASOS:
+ * 1) PEDIDO / PEDIDO_COMPLETO que no genera IDPedido.
+ * 2) Conversación que inicia en SALUDO y no avanza a otro flujo.
  *
  * Antes de alertar, también revisa la hoja PEDIDOS:
  * - mismo teléfono
  * - pedido de hoy
- * - Fecha y hora_recibido >= inicio del intento
+ * - Fecha y hora_recibido >= inicio de la interacción
  * - pedido_cancelado distinto de TRUE
  *
  * MONITOR_PEDIDOS columnas A:N:
@@ -44,6 +44,7 @@ const MONITOR_PEDIDOS_CONFIG = {
   VENTANA_NUEVO_INTENTO_MIN: 30,
   MINUTOS_ACTIVIDAD_RECIENTE: 2,
   ELECCIONES_PEDIDO: ['PEDIDO', 'PEDIDO_COMPLETO'],
+  ELECCION_SALUDO: 'SALUDO',
   PUSHOVER_URL: 'https://api.pushover.net/1/messages.json'
 };
 
@@ -61,8 +62,6 @@ function monitorPedidos() {
     if (!shMonitor) throw new Error('No existe la hoja MONITOR_PEDIDOS.');
     if (!shPedidos) throw new Error('No existe la hoja PEDIDOS.');
 
-    // Antes de cualquier cálculo, elimina de la hoja de monitor todo lo que no sea de hoy
-    // y cualquier falso positivo que no sea PEDIDO / PEDIDO_COMPLETO.
     monitorLimpiarMonitorHoy_(shMonitor);
 
     const props = PropertiesService.getScriptProperties();
@@ -72,18 +71,17 @@ function monitorPedidos() {
     const eventos = monitorLeerEntradasDeHoy_(shEntradas);
     if (!eventos.length) return;
 
-    // Se lee PEDIDOS una sola vez por ciclo para evitar búsquedas repetidas en la hoja.
     const pedidosHoyPorTelefono = monitorLeerPedidosDeHoy_(shPedidos);
-
-    const intentos = monitorConstruirUltimoIntentoPorTelefono_(eventos);
+    const intentos = monitorConstruirUltimaInteraccionPorTelefono_(eventos);
     const estadoGuardado = monitorLeerEstado_(shMonitor);
     const ahora = new Date();
 
     Object.keys(intentos).forEach(telefono => {
       const intento = intentos[telefono];
-      if (!intento.tieneIntentoPedido) return;
 
-      // Si ENTRADASWEBOOK todavía no tiene IDPedido, revisa si el pedido ya existe en PEDIDOS.
+      if (!intento.tieneIntentoPedido && !intento.iniciaConSaludo) return;
+
+      // Cualquier interacción puede quedar resuelta si el pedido ya existe en PEDIDOS.
       if (!intento.idPedido) {
         const pedidoEnPedidos = monitorBuscarPedidoPosterior_(
           pedidosHoyPorTelefono[telefono] || [],
@@ -97,7 +95,7 @@ function monitorPedidos() {
         }
       }
 
-      monitorProcesarIntento_(
+      monitorProcesarInteraccion_(
         shMonitor,
         estadoGuardado[telefono] || null,
         intento,
@@ -124,10 +122,6 @@ function monitorPedidos() {
   }
 }
 
-/**
- * Lee exclusivamente eventos cuya fecha corresponde al día de hoy.
- * La comparación se hace con la zona horaria configurada en la hoja.
- */
 function monitorLeerEntradasDeHoy_(sheet) {
   const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
@@ -178,10 +172,6 @@ function monitorLeerEntradasDeHoy_(sheet) {
   return eventos;
 }
 
-/**
- * Lee los pedidos válidos de HOY y los agrupa por teléfono.
- * No transforma ni agrega prefijos a los teléfonos: usa el valor ya normalizado de la hoja.
- */
 function monitorLeerPedidosDeHoy_(sheet) {
   const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
@@ -207,7 +197,6 @@ function monitorLeerPedidosDeHoy_(sheet) {
 
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
-
     const telefono = monitorTexto_(row[idx.telefono]);
     if (!telefono) continue;
 
@@ -217,17 +206,13 @@ function monitorLeerPedidosDeHoy_(sheet) {
 
     const fechaKey = Utilities.formatDate(fechaPedidoDia, tz, 'yyyy-MM-dd');
     if (fechaKey !== hoyKey) continue;
-
     if (monitorBool_(row[idx.pedido_cancelado])) continue;
 
     const idPedido = monitorTexto_(row[idx.id_pedido]);
     if (!idPedido) continue;
 
     if (!porTelefono[telefono]) porTelefono[telefono] = [];
-    porTelefono[telefono].push({
-      idPedido,
-      fechaRecibido
-    });
+    porTelefono[telefono].push({ idPedido, fechaRecibido });
   }
 
   Object.keys(porTelefono).forEach(telefono => {
@@ -237,9 +222,6 @@ function monitorLeerPedidosDeHoy_(sheet) {
   return porTelefono;
 }
 
-/**
- * Devuelve el primer pedido válido creado en PEDIDOS a partir del inicio del intento.
- */
 function monitorBuscarPedidoPosterior_(pedidosTelefono, inicioIntento) {
   if (!inicioIntento || !pedidosTelefono.length) return null;
 
@@ -253,10 +235,10 @@ function monitorBuscarPedidoPosterior_(pedidosTelefono, inicioIntento) {
 }
 
 /**
- * Agrupa los eventos de HOY por teléfono y separa interacciones por huecos > 30 min.
- * De cada teléfono conserva únicamente el intento más reciente del día.
+ * Agrupa eventos de hoy por teléfono, separa interacciones por huecos > 30 min
+ * y conserva únicamente la interacción más reciente de cada teléfono.
  */
-function monitorConstruirUltimoIntentoPorTelefono_(eventos) {
+function monitorConstruirUltimaInteraccionPorTelefono_(eventos) {
   const porTelefono = {};
 
   eventos.forEach(e => {
@@ -268,7 +250,7 @@ function monitorConstruirUltimoIntentoPorTelefono_(eventos) {
 
   Object.keys(porTelefono).forEach(telefono => {
     const lista = porTelefono[telefono].sort((a, b) => a.fecha - b.fecha);
-    const intentos = [];
+    const interacciones = [];
     let actual = [];
 
     lista.forEach(e => {
@@ -281,24 +263,26 @@ function monitorConstruirUltimoIntentoPorTelefono_(eventos) {
       const gapMin = (e.fecha - previo.fecha) / 60000;
 
       if (gapMin > MONITOR_PEDIDOS_CONFIG.VENTANA_NUEVO_INTENTO_MIN) {
-        intentos.push(actual);
+        interacciones.push(actual);
         actual = [e];
       } else {
         actual.push(e);
       }
     });
 
-    if (actual.length) intentos.push(actual);
-    if (!intentos.length) return;
+    if (actual.length) interacciones.push(actual);
+    if (!interacciones.length) return;
 
-    const resumen = monitorResumirIntento_(telefono, intentos[intentos.length - 1]);
-    if (resumen.tieneIntentoPedido) resultado[telefono] = resumen;
+    const resumen = monitorResumirInteraccion_(telefono, interacciones[interacciones.length - 1]);
+    if (resumen.tieneIntentoPedido || resumen.iniciaConSaludo) {
+      resultado[telefono] = resumen;
+    }
   });
 
   return resultado;
 }
 
-function monitorResumirIntento_(telefono, eventos) {
+function monitorResumirInteraccion_(telefono, eventos) {
   let nombre = '';
   let ultimoMensaje = '';
   let ultimaEleccionGPT = '';
@@ -307,6 +291,9 @@ function monitorResumirIntento_(telefono, eventos) {
   let idPedido = '';
   let fechaPedido = null;
   let tieneIntentoPedido = false;
+  let primeraEleccion = '';
+  let fechaPrimerSaludo = null;
+  let avanceDespuesSaludo = false;
 
   eventos.forEach(e => {
     if (e.nombre) nombre = e.nombre;
@@ -315,8 +302,19 @@ function monitorResumirIntento_(telefono, eventos) {
     if (e.salida) ultimaSalida = e.salida;
     if (e.conversacion) ultimaConversacion = e.conversacion;
 
-    const eleccionNormalizada = monitorNormalizarEleccion_(e.eleccionGPT);
-    if (MONITOR_PEDIDOS_CONFIG.ELECCIONES_PEDIDO.includes(eleccionNormalizada)) {
+    const eleccion = monitorNormalizarEleccion_(e.eleccionGPT);
+
+    if (!primeraEleccion && eleccion) primeraEleccion = eleccion;
+
+    if (eleccion === MONITOR_PEDIDOS_CONFIG.ELECCION_SALUDO && !fechaPrimerSaludo) {
+      fechaPrimerSaludo = e.fecha;
+    }
+
+    if (fechaPrimerSaludo && eleccion && eleccion !== MONITOR_PEDIDOS_CONFIG.ELECCION_SALUDO) {
+      avanceDespuesSaludo = true;
+    }
+
+    if (MONITOR_PEDIDOS_CONFIG.ELECCIONES_PEDIDO.includes(eleccion)) {
       tieneIntentoPedido = true;
     }
 
@@ -339,6 +337,9 @@ function monitorResumirIntento_(telefono, eventos) {
     idPedido,
     fechaPedido,
     tieneIntentoPedido,
+    iniciaConSaludo: primeraEleccion === MONITOR_PEDIDOS_CONFIG.ELECCION_SALUDO,
+    fechaPrimerSaludo,
+    avanceDespuesSaludo,
     completadoDesdePedidos: false
   };
 }
@@ -366,7 +367,7 @@ function monitorLeerEstado_(sheet) {
   return map;
 }
 
-function monitorProcesarIntento_(sheet, previo, intento, ahora, minAlerta, minCritico) {
+function monitorProcesarInteraccion_(sheet, previo, intento, ahora, minAlerta, minCritico) {
   const nuevoIntento = !previo || !previo.inicio ||
     Math.abs(intento.inicio.getTime() - previo.inicio.getTime()) > 60000;
 
@@ -378,6 +379,7 @@ function monitorProcesarIntento_(sheet, previo, intento, ahora, minAlerta, minCr
   const minDesdeInicio = (ahora - intento.inicio) / 60000;
   const minSinActividad = (ahora - intento.ultimaActividad) / 60000;
 
+  // Si ya existe pedido, la interacción está resuelta sin importar si comenzó como SALUDO.
   if (intento.idPedido) {
     let estado = intento.completadoDesdePedidos
       ? 'COMPLETADO_EN_PEDIDOS'
@@ -404,39 +406,81 @@ function monitorProcesarIntento_(sheet, previo, intento, ahora, minAlerta, minCr
     return;
   }
 
-  let estado = 'EN_PROCESO';
+  // Si ya apareció PEDIDO / PEDIDO_COMPLETO, aplica el watchdog de pedido existente.
+  if (intento.tieneIntentoPedido) {
+    let estado = 'EN_PROCESO';
 
-  if (minDesdeInicio >= minAlerta) {
-    estado = minSinActividad <= MONITOR_PEDIDOS_CONFIG.MINUTOS_ACTIVIDAD_RECIENTE
-      ? 'DEMORADO_ACTIVO'
-      : 'POSIBLEMENTE_DETENIDO';
+    if (minDesdeInicio >= minAlerta) {
+      estado = minSinActividad <= MONITOR_PEDIDOS_CONFIG.MINUTOS_ACTIVIDAD_RECIENTE
+        ? 'DEMORADO_ACTIVO'
+        : 'POSIBLEMENTE_DETENIDO';
+    }
+
+    if (minDesdeInicio >= minAlerta && !alerta5) {
+      monitorEnviarPushover_(
+        '⚠️ Pedido sin completar',
+        monitorMensajeAlertaPedido_(intento, minDesdeInicio, minSinActividad, false),
+        1
+      );
+      alerta5 = true;
+    }
+
+    if (minDesdeInicio >= minCritico && !alerta10) {
+      monitorEnviarPushover_(
+        '🚨 Pedido posiblemente detenido',
+        monitorMensajeAlertaPedido_(intento, minDesdeInicio, minSinActividad, true),
+        1
+      );
+      alerta10 = true;
+      estado = 'CRITICO';
+    }
+
+    monitorGuardarEstado_(sheet, fila, intento, estado, alerta5, alerta10, recuperado);
+    return;
   }
 
-  if (minDesdeInicio >= minAlerta && !alerta5) {
-    monitorEnviarPushover_(
-      '⚠️ Pedido sin completar',
-      monitorMensajeAlerta_(intento, minDesdeInicio, minSinActividad, false),
-      1
-    );
-    alerta5 = true;
+  // SALUDO que sí avanzó a otro flujo (ASESOR, PROMOCION, etc.): no se considera detenido.
+  if (intento.iniciaConSaludo && intento.avanceDespuesSaludo) {
+    let estado = 'SALUDO_CONTINUO_OTRO_FLUJO';
+
+    if (alerta5 && !recuperado) {
+      monitorEnviarPushover_(
+        '✅ Conversación reanudada',
+        monitorMensajeSaludoRecuperado_(intento),
+        0
+      );
+      recuperado = true;
+      estado = 'SALUDO_RECUPERADO';
+    }
+
+    monitorGuardarEstado_(sheet, fila, intento, estado, alerta5, alerta10, recuperado);
+    return;
   }
 
-  if (minDesdeInicio >= minCritico && !alerta10) {
-    monitorEnviarPushover_(
-      '🚨 Pedido posiblemente detenido',
-      monitorMensajeAlerta_(intento, minDesdeInicio, minSinActividad, true),
-      1
-    );
-    alerta10 = true;
-    estado = 'CRITICO';
-  }
+  // SALUDO sin continuación: una sola alerta a los 5 minutos.
+  if (intento.iniciaConSaludo) {
+    let estado = 'SALUDO_ESPERANDO_CONTINUACION';
 
-  monitorGuardarEstado_(sheet, fila, intento, estado, alerta5, alerta10, recuperado);
+    if (minDesdeInicio >= minAlerta) {
+      estado = 'SALUDO_SIN_CONTINUACION';
+    }
+
+    if (minDesdeInicio >= minAlerta && !alerta5) {
+      monitorEnviarPushover_(
+        '⚠️ Conversación detenida después del saludo',
+        monitorMensajeAlertaSaludo_(intento, minDesdeInicio),
+        1
+      );
+      alerta5 = true;
+    }
+
+    monitorGuardarEstado_(sheet, fila, intento, estado, alerta5, false, recuperado);
+  }
 }
 
 /**
- * MONITOR_PEDIDOS también queda limitado al día de hoy.
- * Al primer ciclo de un nuevo día elimina automáticamente los registros de ayer.
+ * MONITOR_PEDIDOS queda limitado al día de hoy.
+ * Conserva filas de PEDIDO y SALUDO; otros estados resueltos se eliminan en el siguiente ciclo.
  */
 function monitorLimpiarMonitorHoy_(sheet) {
   const lastRow = sheet.getLastRow();
@@ -460,8 +504,12 @@ function monitorLimpiarMonitorHoy_(sheet) {
     if (inicioKey !== hoyKey) return;
 
     const eleccion = monitorNormalizarEleccion_(r[6]);
-    if (!MONITOR_PEDIDOS_CONFIG.ELECCIONES_PEDIDO.includes(eleccion)) return;
+    const esPedido = MONITOR_PEDIDOS_CONFIG.ELECCIONES_PEDIDO.includes(eleccion);
+    const esSaludo = eleccion === MONITOR_PEDIDOS_CONFIG.ELECCION_SALUDO;
+    const estado = monitorTexto_(r[10]);
+    const esResueltoDesdePedido = estado.indexOf('COMPLETADO') === 0 || estado.indexOf('RECUPERADO') >= 0;
 
+    if (!esPedido && !esSaludo && !esResueltoDesdePedido) return;
     conservar.push(r);
   });
 
@@ -524,9 +572,7 @@ function monitorEnviarPushover_(titulo, mensaje, prioridad) {
     message: String(mensaje || '')
   };
 
-  if (prioridadValida !== 0) {
-    payload.priority = String(prioridadValida);
-  }
+  if (prioridadValida !== 0) payload.priority = String(prioridadValida);
 
   const resp = UrlFetchApp.fetch(MONITOR_PEDIDOS_CONFIG.PUSHOVER_URL, {
     method: 'post',
@@ -540,7 +586,7 @@ function monitorEnviarPushover_(titulo, mensaje, prioridad) {
   }
 }
 
-function monitorMensajeAlerta_(intento, minDesdeInicio, minSinActividad, critica) {
+function monitorMensajeAlertaPedido_(intento, minDesdeInicio, minSinActividad, critica) {
   const tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
   const inicio = Utilities.formatDate(intento.inicio, tz, 'dd/MM/yyyy HH:mm:ss');
   const ultima = Utilities.formatDate(intento.ultimaActividad, tz, 'HH:mm:ss');
@@ -566,6 +612,36 @@ function monitorMensajeAlerta_(intento, minDesdeInicio, minSinActividad, critica
   if (intento.ultimaConversacion) m += '\n🧭 Conversación: ' + monitorRecortar_(intento.ultimaConversacion, 100);
 
   m += '\n\n❌ IDPedido: NO GENERADO';
+  return m;
+}
+
+function monitorMensajeAlertaSaludo_(intento, minDesdeInicio) {
+  const tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+  const inicio = Utilities.formatDate(intento.inicio, tz, 'dd/MM/yyyy HH:mm:ss');
+
+  let m = 'La conversación comenzó con un saludo y no registró ninguna continuación después de 5 minutos.\n\n';
+  if (intento.nombre) m += '👤 ' + intento.nombre + '\n';
+  m += '📱 ' + intento.telefono + '\n';
+  m += '🕐 Inicio: ' + inicio + '\n';
+  m += '⏱️ Tiempo: ' + monitorFormatearMinutos_(minDesdeInicio) + '\n';
+  m += '📥 Webhooks: ' + intento.cantidadWebhooks + '\n';
+
+  if (intento.ultimoMensaje) m += '\n💬 Último mensaje:\n' + monitorRecortar_(intento.ultimoMensaje, 180) + '\n';
+  if (intento.ultimaSalida) m += '\n➡️ Salida: ' + monitorRecortar_(intento.ultimaSalida, 100);
+  if (intento.ultimaConversacion) m += '\n🧭 Conversación: ' + monitorRecortar_(intento.ultimaConversacion, 100);
+
+  m += '\n\n⚠️ Revisar si Treble/Make respondió correctamente al cliente.';
+  return m;
+}
+
+function monitorMensajeSaludoRecuperado_(intento) {
+  let m = '';
+  if (intento.nombre) m += '👤 ' + intento.nombre + '\n';
+  m += '📱 ' + intento.telefono + '\n';
+  m += '✅ La conversación volvió a avanzar.\n';
+  if (intento.ultimaEleccionGPT) m += '🤖 Nuevo flujo: ' + intento.ultimaEleccionGPT + '\n';
+  if (intento.ultimaSalida) m += '➡️ Salida: ' + monitorRecortar_(intento.ultimaSalida, 120) + '\n';
+  m += '\nLa conversación que había quedado detenida en SALUDO volvió a tener continuidad.';
   return m;
 }
 
