@@ -5,6 +5,11 @@
  * Vigila ENTRADASWEBOOK de forma independiente a Make/Treble.
  * Se monitorea por TELÉFONO, no por session_id.
  *
+ * REGLA DE ALCANCE:
+ * - SOLO trabaja con eventos del DÍA DE HOY según la zona horaria de la hoja.
+ * - Por cada teléfono conserva únicamente el intento MÁS RECIENTE de hoy.
+ * - No lee ni alerta pedidos de ayer ni de días anteriores.
+ *
  * SOLO se monitorean intentos donde GPT haya clasificado al menos un evento como:
  *   PEDIDO
  *   PEDIDO_COMPLETO
@@ -30,7 +35,6 @@ const MONITOR_PEDIDOS_CONFIG = {
   HOJA_ENTRADAS: 'ENTRADASWEBOOK',
   HOJA_MONITOR: 'MONITOR_PEDIDOS',
   VENTANA_NUEVO_INTENTO_MIN: 30,
-  HORAS_HISTORICO: 24,
   MINUTOS_ACTIVIDAD_RECIENTE: 2,
   ELECCIONES_PEDIDO: ['PEDIDO', 'PEDIDO_COMPLETO'],
   PUSHOVER_URL: 'https://api.pushover.net/1/messages.json'
@@ -48,13 +52,15 @@ function monitorPedidos() {
     if (!shEntradas) throw new Error('No existe la hoja ENTRADASWEBOOK.');
     if (!shMonitor) throw new Error('No existe la hoja MONITOR_PEDIDOS.');
 
-    monitorLimpiarNoPedidos_(shMonitor);
+    // Antes de cualquier cálculo, elimina de la hoja de monitor todo lo que no sea de hoy
+    // y cualquier falso positivo que no sea PEDIDO / PEDIDO_COMPLETO.
+    monitorLimpiarMonitorHoy_(shMonitor);
 
     const props = PropertiesService.getScriptProperties();
     const minAlerta = Number(props.getProperty('MONITOR_MINUTOS_ALERTA') || 5);
     const minCritico = Number(props.getProperty('MONITOR_MINUTOS_CRITICO') || 10);
 
-    const eventos = monitorLeerEntradasRecientes_(shEntradas);
+    const eventos = monitorLeerEntradasDeHoy_(shEntradas);
     if (!eventos.length) return;
 
     const intentos = monitorConstruirUltimoIntentoPorTelefono_(eventos);
@@ -92,10 +98,18 @@ function monitorPedidos() {
   }
 }
 
-function monitorLeerEntradasRecientes_(sheet) {
+/**
+ * Lee exclusivamente eventos cuya fecha corresponde al día de hoy.
+ * La comparación se hace con la zona horaria configurada en la hoja.
+ */
+function monitorLeerEntradasDeHoy_(sheet) {
   const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
   if (lastRow < 2) return [];
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone();
+  const hoyKey = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
 
   const data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
   const headers = data[0].map(h => String(h).trim());
@@ -109,7 +123,6 @@ function monitorLeerEntradasRecientes_(sheet) {
       }
     });
 
-  const limite = new Date(Date.now() - MONITOR_PEDIDOS_CONFIG.HORAS_HISTORICO * 3600000);
   const eventos = [];
 
   for (let i = 1; i < data.length; i++) {
@@ -118,7 +131,10 @@ function monitorLeerEntradasRecientes_(sheet) {
     if (!telefono) continue;
 
     const fecha = monitorFecha_(row[idx.Fecha]) || monitorFecha_(row[idx.Entrada]);
-    if (!fecha || fecha < limite) continue;
+    if (!fecha) continue;
+
+    const fechaKey = Utilities.formatDate(fecha, tz, 'yyyy-MM-dd');
+    if (fechaKey !== hoyKey) continue;
 
     eventos.push({
       telefono,
@@ -136,6 +152,10 @@ function monitorLeerEntradasRecientes_(sheet) {
   return eventos;
 }
 
+/**
+ * Agrupa los eventos de HOY por teléfono y separa interacciones por huecos > 30 min.
+ * De cada teléfono conserva únicamente el intento más reciente del día.
+ */
 function monitorConstruirUltimoIntentoPorTelefono_(eventos) {
   const porTelefono = {};
 
@@ -169,6 +189,7 @@ function monitorConstruirUltimoIntentoPorTelefono_(eventos) {
     });
 
     if (actual.length) intentos.push(actual);
+    if (!intentos.length) return;
 
     const resumen = monitorResumirIntento_(telefono, intentos[intentos.length - 1]);
     if (resumen.tieneIntentoPedido) resultado[telefono] = resumen;
@@ -308,9 +329,17 @@ function monitorProcesarIntento_(sheet, previo, intento, ahora, minAlerta, minCr
   monitorGuardarEstado_(sheet, fila, intento, estado, alerta5, alerta10, recuperado);
 }
 
-function monitorLimpiarNoPedidos_(sheet) {
+/**
+ * MONITOR_PEDIDOS también queda limitado al día de hoy.
+ * Al primer ciclo de un nuevo día elimina automáticamente los registros de ayer.
+ */
+function monitorLimpiarMonitorHoy_(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = ss.getSpreadsheetTimeZone();
+  const hoyKey = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
 
   const rows = sheet.getRange(2, 1, lastRow - 1, 14).getValues();
   const conservar = [];
@@ -319,10 +348,16 @@ function monitorLimpiarNoPedidos_(sheet) {
     const telefono = monitorNormalizarTelefono_(r[0]);
     if (!telefono) return;
 
+    const inicio = monitorFecha_(r[2]);
+    if (!inicio) return;
+
+    const inicioKey = Utilities.formatDate(inicio, tz, 'yyyy-MM-dd');
+    if (inicioKey !== hoyKey) return;
+
     const eleccion = monitorNormalizarEleccion_(r[6]);
-    if (MONITOR_PEDIDOS_CONFIG.ELECCIONES_PEDIDO.includes(eleccion)) {
-      conservar.push(r);
-    }
+    if (!MONITOR_PEDIDOS_CONFIG.ELECCIONES_PEDIDO.includes(eleccion)) return;
+
+    conservar.push(r);
   });
 
   sheet.getRange(2, 1, Math.max(lastRow - 1, 1), 14).clearContent();
