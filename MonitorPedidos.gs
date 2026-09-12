@@ -28,9 +28,6 @@ const MONITOR_PEDIDOS_CONFIG = {
   PUSHOVER_URL: 'https://api.pushover.net/1/messages.json'
 };
 
-/**
- * Función principal. Instalar trigger cada minuto.
- */
 function monitorPedidos() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) return;
@@ -82,9 +79,6 @@ function monitorPedidos() {
   }
 }
 
-/**
- * Lee solo entradas recientes y normaliza los campos relevantes.
- */
 function monitorLeerEntradasRecientes_(sheet) {
   const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
@@ -129,10 +123,6 @@ function monitorLeerEntradasRecientes_(sheet) {
   return eventos;
 }
 
-/**
- * Agrupa por teléfono. Un hueco > 30 min inicia un intento nuevo.
- * Solo se conserva el intento más reciente de cada número.
- */
 function monitorConstruirUltimoIntentoPorTelefono_(eventos) {
   const porTelefono = {};
   eventos.forEach(e => {
@@ -207,12 +197,6 @@ function monitorResumirIntento_(telefono, eventos) {
   };
 }
 
-/**
- * MONITOR_PEDIDOS columnas A:M:
- * telefono, inicio, ultima_actividad, cantidad_webhooks, ultimo_mensaje,
- * ultima_eleccion_gpt, ultima_salida, ultima_conversacion, IDPedido,
- * estado, alerta_5min_enviada, alerta_10min_enviada, recuperado_notificado
- */
 function monitorLeerEstado_(sheet) {
   const map = {};
   const lastRow = sheet.getLastRow();
@@ -334,15 +318,27 @@ function monitorEnviarPushover_(titulo, mensaje, prioridad) {
   if (!user) throw new Error('Falta Script Property PUSHOVER_USER_KEY.');
   if (!token) throw new Error('Falta Script Property PUSHOVER_API_TOKEN.');
 
+  const prioridadNumero = Number(prioridad);
+  const prioridadValida = [-2, -1, 0, 1, 2].includes(prioridadNumero)
+    ? prioridadNumero
+    : 0;
+
+  const payload = {
+    token: String(token),
+    user: String(user),
+    title: String(titulo || ''),
+    message: String(mensaje || '')
+  };
+
+  // Para prioridad normal (0), Pushover no necesita el parámetro.
+  // Lo omitimos para evitar que Apps Script lo serialice de forma inválida.
+  if (prioridadValida !== 0) {
+    payload.priority = String(prioridadValida);
+  }
+
   const resp = UrlFetchApp.fetch(MONITOR_PEDIDOS_CONFIG.PUSHOVER_URL, {
     method: 'post',
-    payload: {
-      token,
-      user,
-      title: titulo,
-      message: mensaje,
-      priority: Number(prioridad) || 0
-    },
+    payload: payload,
     muteHttpExceptions: true
   });
 
@@ -393,7 +389,6 @@ function monitorMensajeRecuperado_(intento, minHastaPedido) {
   return m;
 }
 
-/** Ejecutar manualmente para probar Pushover. */
 function probarPushoverMonitor() {
   monitorEnviarPushover_(
     '✅ Monitor ARYS conectado',
@@ -402,7 +397,6 @@ function probarPushoverMonitor() {
   );
 }
 
-/** Ejecutar UNA VEZ para crear el trigger cada minuto. */
 function instalarTriggerMonitorPedidos() {
   ScriptApp.getProjectTriggers()
     .filter(t => t.getHandlerFunction() === 'monitorPedidos')
