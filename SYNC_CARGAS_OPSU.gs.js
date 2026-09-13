@@ -334,10 +334,6 @@ function CARGAS_OPSU_sincronizarCargasCore_(mostrarUI) {
     Date.now();
 
 
-  // IMPORTANTE:
-  // El monitor general del proyecto usa su propio ScriptLock.
-  // CARGAS_OPSU usa UserLock para no chocar con ese candado global
-  // cuando ambos procesos corren dentro de MONITOREO_CENTRAL_cadaMinuto.
   const lock =
     LockService.getUserLock();
 
@@ -448,11 +444,6 @@ function CARGAS_OPSU_sincronizarCargasCore_(mostrarUI) {
       );
 
 
-    // ------------------------------------------------------------------------
-    // Folios ya sincronizados que todavía no estén cerrados.
-    // Debemos seguir leyéndolos aunque ya no sean "nuevos".
-    // ------------------------------------------------------------------------
-
     const pendientes =
       new Set();
 
@@ -500,17 +491,6 @@ function CARGAS_OPSU_sincronizarCargasCore_(mostrarUI) {
         pendientes
       );
 
-
-    // ----------------------------------------------------------------------
-    // REINTENTO RAPIDO PARA CARGAS NUEVAS INCOMPLETAS
-    //
-    // Antes, si AppSheet ya había creado la Transacción pero todavía no
-    // terminaba de escribir Fecha o FechaMedidor, la carga se descartaba
-    // hasta el siguiente trigger de 1 minuto.
-    //
-    // Ahora reintentamos dentro de esta misma ejecución. Solo esperamos por
-    // cargas NUEVAS; una fila antigua incompleta no frena todos los ciclos.
-    // ----------------------------------------------------------------------
 
     for (
       let intento = 1;
@@ -565,12 +545,6 @@ function CARGAS_OPSU_sincronizarCargasCore_(mostrarUI) {
 
     }
 
-
-    // ----------------------------------------------------------------------
-    // VENTAS REPARTO
-    // Sumamos únicamente las ventas ligadas a los folios que estamos
-    // sincronizando en este ciclo.
-    // ----------------------------------------------------------------------
 
     const foliosCiclo =
       new Set(
@@ -713,12 +687,6 @@ function CARGAS_OPSU_sincronizarCargasCore_(mostrarUI) {
           pos ===
           undefined
         ) {
-
-          // --------------------------------------------------------------
-          // No crear filas nuevas a medias. AppSheet puede guardar una
-          // Transacción y terminar de rellenar Fecha / FechaMedidor unos
-          // instantes después. Esperamos al siguiente ciclo de 1 minuto.
-          // --------------------------------------------------------------
 
           if (
             !carga.Fuente_Completa
@@ -994,25 +962,6 @@ function CARGAS_OPSU_sincronizarCargasCore_(mostrarUI) {
     );
 
 
-    // ------------------------------------------------------------------------
-    // RECONCILIACION FISICA FINAL DE REPARTO
-    //
-    // MUY IMPORTANTE:
-    // Esta parte NO depende de que el folio siga Abierto en OPSU.
-    //
-    // Si una venta de Reparto se:
-    //   - edita,
-    //   - corrige,
-    //   - elimina,
-    //   - cambia de cantidad,
-    // el total físico de CARGAS_OPSU debe recalcularse aunque el folio ya
-    // esté Cerrado en OPSU.
-    //
-    // Las cargas/fechas/estatus siguen viniendo de OPSU; únicamente los
-    // campos derivados de VENTAS se recalculan aquí para todos los folios
-    // registrados en CARGAS_OPSU.
-    // ------------------------------------------------------------------------
-
     CARGAS_OPSU_recalcularVentasFisicasTabla_(
       tabla,
       h
@@ -1074,7 +1023,8 @@ function CARGAS_OPSU_sincronizarCargasCore_(mostrarUI) {
       folios_con_diferencia:
         cargas.filter(
           x =>
-            x.Tipo_Operacion ==='Reparto' &&
+            x.Tipo_Operacion ===
+              'Reparto' &&
             x.Cuadre ===
               'DIFERENCIA'
         ).length,
@@ -1129,10 +1079,6 @@ function CARGAS_OPSU_sincronizarCargasCore_(mostrarUI) {
 }
 
 
-// ============================================================================
-// EJECUCION MANUAL
-// ============================================================================
-
 function CARGAS_OPSU_sincronizarCargas() {
 
   return CARGAS_OPSU_sincronizarCargasCore_(
@@ -1142,12 +1088,6 @@ function CARGAS_OPSU_sincronizarCargas() {
 }
 
 
-// ============================================================================
-// SINCRONIZACION SILENCIOSA INMEDIATA
-// Puede ser llamada por cualquier otra función de ESTE MISMO proyecto.
-// El trigger de 1 minuto continúa siendo el respaldo automático.
-// ============================================================================
-
 function CARGAS_OPSU_sincronizarSilenciosoAhora() {
 
   return CARGAS_OPSU_sincronizarCargasCore_(
@@ -1156,12 +1096,6 @@ function CARGAS_OPSU_sincronizarSilenciosoAhora() {
 
 }
 
-
-// ============================================================================
-// MONITOREO AUTOMATICO
-// Esta es la función que ejecuta el trigger.
-// NO usa alertas ni requiere que Google Sheets esté abierto.
-// ============================================================================
 
 function CARGAS_OPSU_monitoreoCadaMinuto() {
 
@@ -1205,29 +1139,11 @@ function CARGAS_OPSU_monitoreoCadaMinuto() {
 }
 
 
-// ============================================================================
-// MONITOR CENTRAL UNICO
-//
-// IMPORTANTE:
-// - NO modifica ejecutarMonitoreosCadaMinuto().
-// - NO modifica doPost().
-// - El único trigger de tiempo debe apuntar a:
-//       MONITOREO_CENTRAL_cadaMinuto
-//
-// Secuencia:
-//   1. Ejecuta el monitor existente de pedidos.
-//   2. Ejecuta la sincronización OPSU -> Reparto.
-// ============================================================================
-
 function MONITOREO_CENTRAL_cadaMinuto() {
 
   const inicio =
     Date.now();
 
-
-  // --------------------------------------------------------------------------
-  // MONITOREOS EXISTENTES DEL PROYECTO
-  // --------------------------------------------------------------------------
 
   try {
 
@@ -1242,10 +1158,6 @@ function MONITOREO_CENTRAL_cadaMinuto() {
 
   }
 
-
-  // --------------------------------------------------------------------------
-  // CARGAS OPSU
-  // --------------------------------------------------------------------------
 
   try {
 
@@ -1287,20 +1199,6 @@ function MONITOREO_CENTRAL_cadaMinuto() {
 }
 
 
-// ============================================================================
-// INSTALAR MONITOR CENTRAL CADA 1 MINUTO
-//
-// Ejecutar UNA sola vez manualmente después de pegar esta versión.
-//
-// Elimina exclusivamente triggers de tiempo de:
-//   ejecutarMonitoreosCadaMinuto
-//   CARGAS_OPSU_monitoreoCadaMinuto
-//   MONITOREO_CENTRAL_cadaMinuto
-//
-// Conserva los demás triggers del proyecto.
-// También deja UN solo trigger onEdit para PARAMETROS.
-// ============================================================================
-
 function CARGAS_OPSU_instalarMonitoreo1Minuto() {
 
   const ssReparto =
@@ -1323,11 +1221,6 @@ function CARGAS_OPSU_instalarMonitoreo1Minuto() {
       ssReparto.getId()
     );
 
-
-  // --------------------------------------------------------------------------
-  // Eliminar únicamente los triggers de tiempo que podrían duplicar
-  // los procesos por minuto.
-  // --------------------------------------------------------------------------
 
   ScriptApp
     .getProjectTriggers()
@@ -1357,10 +1250,6 @@ function CARGAS_OPSU_instalarMonitoreo1Minuto() {
     );
 
 
-  // --------------------------------------------------------------------------
-  // Crear UN SOLO trigger por minuto.
-  // --------------------------------------------------------------------------
-
   ScriptApp
     .newTrigger(
       'MONITOREO_CENTRAL_cadaMinuto'
@@ -1371,10 +1260,6 @@ function CARGAS_OPSU_instalarMonitoreo1Minuto() {
     )
     .create();
 
-
-  // --------------------------------------------------------------------------
-  // Dejar un solo trigger onEdit para PARAMETROS.
-  // --------------------------------------------------------------------------
 
   ScriptApp
     .getProjectTriggers()
@@ -1420,17 +1305,6 @@ function CARGAS_OPSU_instalarMonitoreo1Minuto() {
 
 }
 
-
-// ============================================================================
-// ELIMINAR SOLO EL MONITOR CENTRAL OPSU
-//
-// Esta función elimina:
-//   - MONITOREO_CENTRAL_cadaMinuto
-//   - CARGAS_OPSU_monitoreoCadaMinuto si quedara uno viejo
-//   - CARGAS_OPSU_alEditarParametros
-//
-// NO recrea el trigger original de pedidos.
-// ============================================================================
 
 function CARGAS_OPSU_eliminarMonitoreo1Minuto() {
 
@@ -1479,12 +1353,6 @@ function CARGAS_OPSU_eliminarMonitoreo1Minuto() {
 }
 
 
-// ============================================================================
-// REPARAR / PROBAR FILAS INCOMPLETAS
-// Ejecuta una sincronización silenciosa. Si OPSU ya terminó de guardar
-// Fecha y FechaMedidor, las filas parciales se completan aquí mismo.
-// ============================================================================
-
 function CARGAS_OPSU_repararFilasIncompletas() {
 
   const resultado =
@@ -1505,12 +1373,6 @@ function CARGAS_OPSU_repararFilasIncompletas() {
 
 }
 
-
-// ============================================================================
-// DIAGNOSTICO MANUAL DE CARGAS OPSU
-// Ejecuta solo CARGAS_OPSU, sin alertas y sin ejecutar los otros monitoreos.
-// Útil para comprobar la conciliación física.
-// ============================================================================
 
 function CARGAS_OPSU_recalcularVentasAhora() {
 
@@ -1624,11 +1486,6 @@ function CARGAS_OPSU_probarConciliacionFisica() {
 }
 
 
-// ============================================================================
-// INVALIDAR CACHE AL EDITAR PARAMETROS
-// Trigger instalable. No interfiere con otros onEdit del proyecto.
-// ============================================================================
-
 function CARGAS_OPSU_alEditarParametros(e) {
 
   try {
@@ -1677,10 +1534,6 @@ function CARGAS_OPSU_alEditarParametros(e) {
 }
 
 
-// ============================================================================
-// SPREADSHEET DE REPARTO SEGURO PARA TRIGGERS
-// ============================================================================
-
 function CARGAS_OPSU_getSpreadsheetReparto_() {
 
   const props =
@@ -1727,10 +1580,6 @@ function CARGAS_OPSU_getSpreadsheetReparto_() {
 
 }
 
-
-// ============================================================================
-// LECTOR OPSU
-// ============================================================================
 
 function CARGAS_OPSU_leerCargas_(
   soloActualesAbiertas,
@@ -1784,10 +1633,6 @@ function CARGAS_OPSU_leerCargas_(
   }
 
 
-  // --------------------------------------------------------------------------
-  // PARAMETROS
-  // --------------------------------------------------------------------------
-
   const emailPorCOD =
     CARGAS_OPSU_getMapaVendedores_(
       false
@@ -1797,11 +1642,6 @@ function CARGAS_OPSU_leerCargas_(
   const rutaPorCOD =
     CARGAS_OPSU_getMapaRutas_();
 
-
-  // --------------------------------------------------------------------------
-  // TRANSACCIONES
-  // Solo A:J
-  // --------------------------------------------------------------------------
 
   const tLastRow =
     shT.getLastRow();
@@ -1902,10 +1742,14 @@ function CARGAS_OPSU_leerCargas_(
     );
 
 
+  // Siguiente día operativo: el domingo no se trabaja.
+  // Sábado -> lunes; domingo -> lunes; resto -> día siguiente.
   const manana =
     CARGAS_OPSU_addDias_(
       hoy,
-      1
+      hoy.getDay() === 6
+        ? 2
+        : 1
     );
 
 
@@ -2102,7 +1946,8 @@ function CARGAS_OPSU_leerCargas_(
       Ruta_Reparto:
         rutaReparto,
 
-      Tipo_Operacion:idVendedor
+      Tipo_Operacion:
+        idVendedor
           ? 'Reparto'
           : 'Externo',
 
@@ -2150,17 +1995,6 @@ function CARGAS_OPSU_leerCargas_(
 
   }
 
-
-  // --------------------------------------------------------------------------
-  // DETALLE_TRANSAC
-  // Leemos B:K
-  //
-  // B = Folio
-  // G = Cod_Pro
-  // H = Carga
-  // I = Devolucion
-  // K = Venta
-  // --------------------------------------------------------------------------
 
   const dLastRow =
     shD.getLastRow();
@@ -2314,10 +2148,6 @@ function CARGAS_OPSU_leerCargas_(
 
       }
 
-
-      // Vacíos y demás códigos:
-      // deliberadamente ignorados.
-
     }
 
   }
@@ -2370,23 +2200,6 @@ function CARGAS_OPSU_leerCargas_(
 
 }
 
-
-// ============================================================================
-// RECALCULAR CAMPOS FISICOS DE VENTAS PARA TODA CARGAS_OPSU
-//
-// Se ejecuta en CADA ciclo y es independiente de Estatus_OPSU.
-//
-// Esto garantiza que una edición posterior en VENTAS se refleje físicamente
-// en CARGAS_OPSU.
-//
-// Campos recalculados:
-//   Agua_Venta_Reparto
-//   SuperIce_Venta_Reparto
-//   Comision_Reparto
-//   Agua_Diferencia
-//   SuperIce_Diferencia
-//   Cuadre
-// ============================================================================
 
 function CARGAS_OPSU_recalcularVentasFisicasTabla_(
   tabla,
@@ -2510,7 +2323,6 @@ function CARGAS_OPSU_recalcularVentasFisicasTabla_(
     }
 
 
-    // Los externos no dependen de VENTAS Reparto.
     if (
       tipo ===
       'Externo'
@@ -2658,22 +2470,6 @@ function CARGAS_OPSU_recalcularVentasFisicasTabla_(
 }
 
 
-// ============================================================================
-// VENTAS REPARTO POR FOLIO
-// Lee únicamente:
-//   IDCarga_ref
-//   Agua 20 Litros
-//   SuperIce
-//
-// Devuelve:
-// {
-//   "FOLIO": {
-//      agua: 0,
-//      superice: 0
-//   }
-// }
-// ============================================================================
-
 function CARGAS_OPSU_leerVentasReparto_(
   folios
 ) {
@@ -2776,15 +2572,16 @@ function CARGAS_OPSU_leerVentasReparto_(
 
 
   const filas =
-    lastRow - 1;
+    lastRow -
+    1;
 
 
-  // Leemos únicamente las cuatro columnas que necesitamos.
   const valoresFolio =
     sh
       .getRange(
         2,
-        cFolio + 1,
+        cFolio +
+        1,
         filas,
         1
       )
@@ -2795,7 +2592,8 @@ function CARGAS_OPSU_leerVentasReparto_(
     sh
       .getRange(
         2,
-        cAgua + 1,
+        cAgua +
+        1,
         filas,
         1
       )
@@ -2806,7 +2604,8 @@ function CARGAS_OPSU_leerVentasReparto_(
     sh
       .getRange(
         2,
-        cIce + 1,
+        cIce +
+        1,
         filas,
         1
       )
@@ -2817,7 +2616,8 @@ function CARGAS_OPSU_leerVentasReparto_(
     sh
       .getRange(
         2,
-        cComision + 1,
+        cComision +
+        1,
         filas,
         1
       )
@@ -2903,11 +2703,6 @@ function CARGAS_OPSU_leerVentasReparto_(
 }
 
 
-// ============================================================================
-// MAPA PARAMETROS COD -> id_vendedor
-// CON CACHE CORTO + INVALIDACION AUTOMATICA
-// ============================================================================
-
 function CARGAS_OPSU_getMapaVendedores_(
   forzar
 ) {
@@ -2933,9 +2728,6 @@ function CARGAS_OPSU_getMapaVendedores_(
         );
 
       } catch (e) {
-
-        // Si el cache estuviera corrupto,
-        // simplemente se reconstruye.
 
       }
 
@@ -2979,7 +2771,6 @@ function CARGAS_OPSU_getMapaVendedores_(
     2
   ) {
 
-    // Solo leemos la fila de encabezados completa.
     const headers =
       sh
         .getRange(
@@ -3011,16 +2802,17 @@ function CARGAS_OPSU_getMapaVendedores_(
       );
 
 
-    // Después solo leemos las dos columnas necesarias.
     const filas =
-      lastRow - 1;
+      lastRow -
+      1;
 
 
     const valoresCod =
       sh
         .getRange(
           2,
-          cCod + 1,
+          cCod +
+          1,
           filas,
           1
         )
@@ -3031,7 +2823,8 @@ function CARGAS_OPSU_getMapaVendedores_(
       sh
         .getRange(
           2,
-          cEmail + 1,
+          cEmail +
+          1,
           filas,
           1
         )
@@ -3086,10 +2879,6 @@ function CARGAS_OPSU_getMapaVendedores_(
 
 }
 
-
-// ============================================================================
-// MAPA PARAMETROS COD -> Ruta
-// ============================================================================
 
 function CARGAS_OPSU_getMapaRutas_() {
 
@@ -3160,14 +2949,16 @@ function CARGAS_OPSU_getMapaRutas_() {
 
 
     const filas =
-      lastRow - 1;
+      lastRow -
+      1;
 
 
     const valoresCod =
       sh
         .getRange(
           2,
-          cCod + 1,
+          cCod +
+          1,
           filas,
           1
         )
@@ -3178,7 +2969,8 @@ function CARGAS_OPSU_getMapaRutas_() {
       sh
         .getRange(
           2,
-          cRuta + 1,
+          cRuta +
+          1,
           filas,
           1
         )
@@ -3225,10 +3017,6 @@ function CARGAS_OPSU_getMapaRutas_() {
 }
 
 
-// ============================================================================
-// VALIDAR CARGAS_OPSU
-// ============================================================================
-
 function CARGAS_OPSU_validarDestino_(
   h
 ) {
@@ -3239,7 +3027,8 @@ function CARGAS_OPSU_validarDestino_(
     'Fecha_Carga_OPSU',
     'Fecha_Operacion',
     'Moto',
-    'No_Carga','COD',
+    'No_Carga',
+    'COD',
     'id_vendedor',
     'Ruta_Reparto',
     'Tipo_Operacion',
@@ -3269,10 +3058,6 @@ function CARGAS_OPSU_validarDestino_(
 
 }
 
-
-// ============================================================================
-// UTILIDADES
-// ============================================================================
 
 function CARGAS_OPSU_headers_(
   fila
