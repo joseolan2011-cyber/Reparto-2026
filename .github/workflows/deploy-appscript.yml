@@ -44,10 +44,11 @@ jobs:
           printf '{"scriptId":"%s","rootDir":"."}\n' "$APPS_SCRIPT_ID" > .clasp.json
           clasp pull
 
-      - name: Overlay watchdog modules with deploy versions
+      - name: Overlay managed modules from GitHub
         run: |
           test -f "$GITHUB_WORKSPACE/MonitorPedidos.gs" || (echo "MonitorPedidos.gs not found" && exit 1)
           test -f "$GITHUB_WORKSPACE/MonitorMake.gs" || (echo "MonitorMake.gs not found" && exit 1)
+          test -f "$GITHUB_WORKSPACE/SYNC_CARGAS_OPSU.gs.js" || (echo "SYNC_CARGAS_OPSU.gs.js not found" && exit 1)
           SHORT_SHA="${GITHUB_SHA::8}"
 
           rm -f /tmp/reparto-remote/MonitorPedidos.js /tmp/reparto-remote/MonitorPedidos.gs
@@ -66,36 +67,34 @@ jobs:
             cat "$GITHUB_WORKSPACE/MonitorMake.gs"
           } > /tmp/reparto-remote/MonitorMake.js
 
+          rm -f /tmp/reparto-remote/SYNC_CARGAS_OPSU.js /tmp/reparto-remote/SYNC_CARGAS_OPSU.gs
+          {
+            echo "// DEPLOY_VERSION: REPARTO-CARGAS-${SHORT_SHA}"
+            echo "// DEPLOYED_FROM_GITHUB: ${GITHUB_SHA}"
+            echo
+            cat "$GITHUB_WORKSPACE/SYNC_CARGAS_OPSU.gs.js"
+          } > /tmp/reparto-remote/SYNC_CARGAS_OPSU.js
+
       - name: Integrate watchdogs into central trigger
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          root = Path('/tmp/reparto-remote')
-          candidates = list(root.glob('SYNC_CARGAS_OPSU*.js')) + list(root.glob('SYNC_CARGAS_OPSU*.gs'))
-          if not candidates:
-              raise SystemExit('SYNC_CARGAS_OPSU file not found after clasp pull')
+          path = Path('/tmp/reparto-remote/SYNC_CARGAS_OPSU.js')
+          if not path.exists():
+              raise SystemExit('SYNC_CARGAS_OPSU.js not found after overlay')
 
-          path = candidates[0]
           text = path.read_text(encoding='utf-8')
 
-          # 1) Insert monitorPedidos() into the existing central minute monitor.
-          if 'MONITOR PEDIDOS WHATSAPP' not in text:
-              marker = """  // --------------------------------------------------------------------------\n  // CARGAS OPSU\n  // --------------------------------------------------------------------------\n"""
-              block = """  // --------------------------------------------------------------------------\n  // MONITOR PEDIDOS WHATSAPP\n  // --------------------------------------------------------------------------\n\n  try {\n\n    monitorPedidos();\n\n  } catch (error) {\n\n    console.error(\n      'MONITOR CENTRAL - error en monitorPedidos: ' +\n      error.stack\n    );\n\n  }\n\n\n"""
-              if marker not in text:
-                  raise SystemExit('Could not find CARGAS OPSU marker in MONITOREO_CENTRAL_cadaMinuto')
-              text = text.replace(marker, block + marker, 1)
+          # Insert both watchdogs immediately before the CARGAS_OPSU cycle.
+          if 'monitorPedidos();' not in text or 'monitorMakeEscenarios(false);' not in text:
+              old = """  try {\n\n    const resultadoCargas =\n      CARGAS_OPSU_monitoreoCadaMinuto();\n"""
+              block = """  // MONITOR PEDIDOS WHATSAPP\n  try {\n\n    monitorPedidos();\n\n  } catch (error) {\n\n    console.error(\n      'MONITOR CENTRAL - error en monitorPedidos: ' +\n      error.stack\n    );\n\n  }\n\n\n  // MONITOR MAKE ESCENARIOS\n  try {\n\n    monitorMakeEscenarios(false);\n\n  } catch (error) {\n\n    console.error(\n      'MONITOR CENTRAL - error en monitorMakeEscenarios: ' +\n      error.stack\n    );\n\n  }\n\n\n  // CARGAS OPSU\n  try {\n\n    const resultadoCargas =\n      CARGAS_OPSU_monitoreoCadaMinuto();\n"""
+              if old not in text:
+                  raise SystemExit('Could not find CARGAS_OPSU execution block in MONITOREO_CENTRAL_cadaMinuto')
+              text = text.replace(old, block, 1)
 
-          # 2) Insert Make scenario watchdog before CARGAS OPSU.
-          if 'MONITOR MAKE ESCENARIOS' not in text:
-              marker = """  // --------------------------------------------------------------------------\n  // CARGAS OPSU\n  // --------------------------------------------------------------------------\n"""
-              block = """  // --------------------------------------------------------------------------\n  // MONITOR MAKE ESCENARIOS\n  // --------------------------------------------------------------------------\n\n  try {\n\n    monitorMakeEscenarios(false);\n\n  } catch (error) {\n\n    console.error(\n      'MONITOR CENTRAL - error en monitorMakeEscenarios: ' +\n      error.stack\n    );\n\n  }\n\n\n"""
-              if marker not in text:
-                  raise SystemExit('Could not find CARGAS OPSU marker for Make watchdog insertion')
-              text = text.replace(marker, block + marker, 1)
-
-          # 3) Ensure installer removes any old independent monitorPedidos trigger.
+          # Ensure installer removes any old independent monitorPedidos trigger.
           if "handler ===\n            'monitorPedidos'" not in text and "handler === 'monitorPedidos'" not in text:
               old = """          handler ===\n            'ejecutarMonitoreosCadaMinuto' ||\n          handler ===\n            'CARGAS_OPSU_monitoreoCadaMinuto' ||\n"""
               new = """          handler ===\n            'ejecutarMonitoreosCadaMinuto' ||\n          handler ===\n            'monitorPedidos' ||\n          handler ===\n            'CARGAS_OPSU_monitoreoCadaMinuto' ||\n"""
@@ -103,15 +102,18 @@ jobs:
                   raise SystemExit('Could not find trigger cleanup block in CARGAS_OPSU_instalarMonitoreo1Minuto')
               text = text.replace(old, new, 1)
 
-          # 4) Keep the central-monitor sequence comments accurate when possible.
-          text = text.replace(
-              "//   1. Ejecuta los monitoreos existentes del proyecto.\n//   2. Ejecuta monitorPedidos() (watchdog ENTRADASWEBOOK -> PEDIDOS).\n//   3. Ejecuta la sincronización OPSU -> Reparto.",
-              "//   1. Ejecuta los monitoreos existentes del proyecto.\n//   2. Ejecuta monitorPedidos() (watchdog ENTRADASWEBOOK -> PEDIDOS).\n//   3. Ejecuta monitorMakeEscenarios() (watchdog Make -> Pushover).\n//   4. Ejecuta la sincronización OPSU -> Reparto."
-          )
-
           path.write_text(text, encoding='utf-8')
-          print(f'Central monitor patched safely in {path.name}')
+          print('SYNC_CARGAS_OPSU overlaid from GitHub and watchdogs preserved')
           PY
+
+      - name: Validate critical modules before push
+        run: |
+          grep -q "monitorPedidos();" /tmp/reparto-remote/SYNC_CARGAS_OPSU.js
+          grep -q "monitorMakeEscenarios(false);" /tmp/reparto-remote/SYNC_CARGAS_OPSU.js
+          grep -q "hoy.getDay() === 6" /tmp/reparto-remote/SYNC_CARGAS_OPSU.js
+          grep -q "function monitorPedidos" /tmp/reparto-remote/MonitorPedidos.js
+          grep -q "function monitorMakeEscenarios" /tmp/reparto-remote/MonitorMake.js
+          echo "Validation OK: CARGAS + webhook monitor + Make watchdog"
 
       - name: Push safe mirror to Apps Script
         run: |
