@@ -45,6 +45,7 @@ const MONITOR_PEDIDOS_CONFIG = {
   MINUTOS_ACTIVIDAD_RECIENTE: 2,
   ELECCIONES_PEDIDO: ['PEDIDO', 'PEDIDO_COMPLETO'],
   ELECCION_SALUDO: 'SALUDO',
+  ELECCIONES_TERMINALES: ['ASESOR'],
   PUSHOVER_URL: 'https://api.pushover.net/1/messages.json'
 };
 
@@ -403,6 +404,14 @@ function monitorProcesarInteraccion_(sheet, previo, intento, ahora, minAlerta, m
     }
 
     monitorGuardarEstado_(sheet, fila, intento, estado, alerta5, alerta10, recuperado);
+    return;
+  }
+
+  // Si la interacción terminó explícitamente en ASESOR, ya no es un pedido pendiente.
+  // Se cierra silenciosamente para evitar que siga generando alertas horas después.
+  const ultimaEleccion = monitorNormalizarEleccion_(intento.ultimaEleccionGPT);
+  if (MONITOR_PEDIDOS_CONFIG.ELECCIONES_TERMINALES.includes(ultimaEleccion)) {
+    monitorGuardarEstado_(sheet, fila, intento, 'CERRADO_' + ultimaEleccion, alerta5, alerta10, recuperado);
     return;
   }
 
