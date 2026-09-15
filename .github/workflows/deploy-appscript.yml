@@ -75,7 +75,7 @@ jobs:
             cat "$GITHUB_WORKSPACE/SYNC_CARGAS_OPSU.gs.js"
           } > /tmp/reparto-remote/SYNC_CARGAS_OPSU.js
 
-      - name: Integrate watchdogs into central trigger
+      - name: Integrate watchdogs and disable legacy Telegram monitor
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -86,6 +86,17 @@ jobs:
 
           text = path.read_text(encoding='utf-8')
 
+          # Telegram ya vive en el proyecto independiente Pedidos_Telegram.
+          # Conservamos el código legacy en Reparto para rollback, pero dejamos de ejecutarlo
+          # desde el monitor central para evitar dobles envíos, dobles retrasos y carreras.
+          legacy = """  try {\n\n    ejecutarMonitoreosCadaMinuto();\n\n  } catch (error) {\n\n    console.error(\n      'MONITOR CENTRAL - error en monitoreos existentes: ' +\n      error.stack\n    );\n\n  }\n\n\n"""
+          if legacy in text:
+              text = text.replace(
+                  legacy,
+                  """  // TELEGRAM MIGRADO A Pedidos_Telegram\n  // El monitor legacy ejecutarMonitoreosCadaMinuto() se conserva en el proyecto\n  // únicamente como respaldo y NO se ejecuta desde Reparto.\n\n\n""",
+                  1
+              )
+
           # Insert both watchdogs immediately before the CARGAS_OPSU cycle.
           if 'monitorPedidos();' not in text or 'monitorMakeEscenarios(false);' not in text:
               old = """  try {\n\n    const resultadoCargas =\n      CARGAS_OPSU_monitoreoCadaMinuto();\n"""
@@ -94,7 +105,7 @@ jobs:
                   raise SystemExit('Could not find CARGAS_OPSU execution block in MONITOREO_CENTRAL_cadaMinuto')
               text = text.replace(old, block, 1)
 
-          # Ensure installer removes any old independent monitorPedidos trigger.
+          # Ensure installer removes any old independent Telegram/monitorPedidos triggers.
           if "handler ===\n            'monitorPedidos'" not in text and "handler === 'monitorPedidos'" not in text:
               old = """          handler ===\n            'ejecutarMonitoreosCadaMinuto' ||\n          handler ===\n            'CARGAS_OPSU_monitoreoCadaMinuto' ||\n"""
               new = """          handler ===\n            'ejecutarMonitoreosCadaMinuto' ||\n          handler ===\n            'monitorPedidos' ||\n          handler ===\n            'CARGAS_OPSU_monitoreoCadaMinuto' ||\n"""
@@ -103,7 +114,7 @@ jobs:
               text = text.replace(old, new, 1)
 
           path.write_text(text, encoding='utf-8')
-          print('SYNC_CARGAS_OPSU overlaid from GitHub and watchdogs preserved')
+          print('Reparto central listo: Telegram legacy desactivado; watchdogs preservados')
           PY
 
       - name: Validate critical modules before push
@@ -113,7 +124,11 @@ jobs:
           grep -q "hoy.getDay() === 6" /tmp/reparto-remote/SYNC_CARGAS_OPSU.js
           grep -q "function monitorPedidos" /tmp/reparto-remote/MonitorPedidos.js
           grep -q "function monitorMakeEscenarios" /tmp/reparto-remote/MonitorMake.js
-          echo "Validation OK: CARGAS + webhook monitor + Make watchdog"
+          if grep -q "ejecutarMonitoreosCadaMinuto();" /tmp/reparto-remote/SYNC_CARGAS_OPSU.js; then
+            echo "ERROR: legacy Telegram monitor is still called from Reparto central"
+            exit 1
+          fi
+          echo "Validation OK: Telegram migrated + CARGAS + webhook monitor + Make watchdog"
 
       - name: Push safe mirror to Apps Script
         run: |
