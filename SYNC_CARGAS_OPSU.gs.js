@@ -1,7 +1,7 @@
 // ============================================================================
 // SYNC_CARGAS_OPSU.gs
 // REPARTO <- OPSU
-// VERSION 1.9 - MONITOR CENTRAL + REINTENTO RAPIDO DE FILAS INCOMPLETAS
+// VERSION 2.0 - PROMOS SUPERICE POR IDCarga_ref + MONITOR CENTRAL
 // ============================================================================
 //
 // OPSU: SOLO LECTURA.
@@ -70,6 +70,9 @@ const SYNC_OPSU = {
 
   HOJA_VENTAS:
     'VENTAS',
+
+  HOJA_PROMOS:
+    'ENTREGAS_PROMO',
 
   COD_AGUA:
     [58, 52, 13, 55, 5, 53],
@@ -2292,6 +2295,12 @@ function CARGAS_OPSU_recalcularVentasFisicasTabla_(
     );
 
 
+  const promos =
+    CARGAS_OPSU_leerPromosReparto_(
+      folios
+    );
+
+
   for (
     let i = 1;
     i < tabla.length;
@@ -2327,6 +2336,14 @@ function CARGAS_OPSU_recalcularVentasFisicasTabla_(
       tipo ===
       'Externo'
     ) {
+
+      CARGAS_OPSU_set_(
+        fila,
+        h,
+        'SuperIce_Promo_Reparto',
+        0
+      );
+
 
       CARGAS_OPSU_set_(
         fila,
@@ -2385,6 +2402,15 @@ function CARGAS_OPSU_recalcularVentasFisicasTabla_(
       );
 
 
+    const promoSuperIce =
+      CARGAS_OPSU_num_(
+        promos[
+          folio
+        ] ||
+        0
+      );
+
+
     const aguaOpsu =
       CARGAS_OPSU_num_(
         fila[
@@ -2408,7 +2434,8 @@ function CARGAS_OPSU_recalcularVentasFisicasTabla_(
 
     const diferenciaIce =
       iceOpsu -
-      iceReparto;
+      iceReparto -
+      promoSuperIce;
 
 
     CARGAS_OPSU_set_(
@@ -2424,6 +2451,14 @@ function CARGAS_OPSU_recalcularVentasFisicasTabla_(
       h,
       'SuperIce_Venta_Reparto',
       iceReparto
+    );
+
+
+    CARGAS_OPSU_set_(
+      fila,
+      h,
+      'SuperIce_Promo_Reparto',
+      promoSuperIce
     );
 
 
@@ -2466,6 +2501,335 @@ function CARGAS_OPSU_recalcularVentasFisicasTabla_(
     );
 
   }
+
+}
+
+
+function CARGAS_OPSU_leerPromosReparto_(
+  folios
+) {
+
+  const resultado = {};
+
+
+  if (
+    !folios ||
+    !folios.size
+  ) {
+
+    return resultado;
+
+  }
+
+
+  const ss =
+    CARGAS_OPSU_getSpreadsheetReparto_();
+
+
+  const shVentas =
+    ss.getSheetByName(
+      SYNC_OPSU.HOJA_VENTAS
+    );
+
+
+  const shPromos =
+    ss.getSheetByName(
+      SYNC_OPSU.HOJA_PROMOS
+    );
+
+
+  if (!shVentas) {
+
+    throw new Error(
+      'No existe la hoja VENTAS en Reparto.'
+    );
+
+  }
+
+
+  if (!shPromos) {
+
+    throw new Error(
+      'No existe la hoja ENTREGAS_PROMO en Reparto.'
+    );
+
+  }
+
+
+  const lastRowVentas =
+    shVentas.getLastRow();
+
+
+  const lastColVentas =
+    shVentas.getLastColumn();
+
+
+  const mapaVentaFolio = {};
+
+
+  if (
+    lastRowVentas >=
+      2 &&
+    lastColVentas >=
+      1
+  ) {
+
+    const headersVentas =
+      shVentas
+        .getRange(
+          1,
+          1,
+          1,
+          lastColVentas
+        )
+        .getValues()[0];
+
+
+    const hv =
+      CARGAS_OPSU_headers_(
+        headersVentas
+      );
+
+
+    const cIdVenta =
+      CARGAS_OPSU_col_(
+        hv,
+        'id_venta'
+      );
+
+
+    const cFolio =
+      CARGAS_OPSU_col_(
+        hv,
+        'IDCarga_ref'
+      );
+
+
+    const filas =
+      lastRowVentas -
+      1;
+
+
+    const valoresId =
+      shVentas
+        .getRange(
+          2,
+          cIdVenta +
+            1,
+          filas,
+          1
+        )
+        .getValues();
+
+
+    const valoresFolio =
+      shVentas
+        .getRange(
+          2,
+          cFolio +
+            1,
+          filas,
+          1
+        )
+        .getValues();
+
+
+    for (
+      let i = 0;
+      i < filas;
+      i++
+    ) {
+
+      const idVenta =
+        CARGAS_OPSU_txt_(
+          valoresId[i][0]
+        );
+
+
+      const folio =
+        CARGAS_OPSU_txt_(
+          valoresFolio[i][0]
+        );
+
+
+      if (
+        idVenta &&
+        folio &&
+        folios.has(
+          folio
+        )
+      ) {
+
+        mapaVentaFolio[
+          idVenta
+        ] =
+          folio;
+
+      }
+
+    }
+
+  }
+
+
+  const lastRowPromos =
+    shPromos.getLastRow();
+
+
+  const lastColPromos =
+    shPromos.getLastColumn();
+
+
+  if (
+    lastRowPromos <
+      2 ||
+    lastColPromos <
+      1
+  ) {
+
+    return resultado;
+
+  }
+
+
+  const headersPromos =
+    shPromos
+      .getRange(
+        1,
+        1,
+        1,
+        lastColPromos
+      )
+      .getValues()[0];
+
+
+  const hp =
+    CARGAS_OPSU_headers_(
+      headersPromos
+    );
+
+
+  const cPromoVenta =
+    CARGAS_OPSU_col_(
+      hp,
+      'id_venta'
+    );
+
+
+  const cPromoPiezas =
+    CARGAS_OPSU_col_(
+      hp,
+      'piezas_entregadas'
+    );
+
+
+  const cPromoEstatus =
+    CARGAS_OPSU_col_(
+      hp,
+      'Estatus'
+    );
+
+
+  const filasPromos =
+    lastRowPromos -
+    1;
+
+
+  const valoresVenta =
+    shPromos
+      .getRange(
+        2,
+        cPromoVenta +
+          1,
+        filasPromos,
+        1
+      )
+      .getValues();
+
+
+  const valoresPiezas =
+    shPromos
+      .getRange(
+        2,
+        cPromoPiezas +
+          1,
+        filasPromos,
+        1
+      )
+      .getValues();
+
+
+  const valoresEstatus =
+    shPromos
+      .getRange(
+        2,
+        cPromoEstatus +
+          1,
+        filasPromos,
+        1
+      )
+      .getValues();
+
+
+  for (
+    let i = 0;
+    i < filasPromos;
+    i++
+  ) {
+
+    if (
+      CARGAS_OPSU_norm_(
+        valoresEstatus[i][0]
+      ) !==
+      'autorizado'
+    ) {
+
+      continue;
+
+    }
+
+
+    const idVenta =
+      CARGAS_OPSU_txt_(
+        valoresVenta[i][0]
+      );
+
+
+    const folio =
+      mapaVentaFolio[
+        idVenta
+      ];
+
+
+    if (
+      !folio ||
+      !folios.has(
+        folio
+      )
+    ) {
+
+      continue;
+
+    }
+
+
+    resultado[
+      folio
+    ] =
+      CARGAS_OPSU_num_(
+        resultado[
+          folio
+        ] ||
+        0
+      ) +
+      CARGAS_OPSU_num_(
+        valoresPiezas[i][0]
+      );
+
+  }
+
+
+  return resultado;
 
 }
 
@@ -3042,6 +3406,7 @@ function CARGAS_OPSU_validarDestino_(
     'SuperIce_Venta_OPSU',
     'Agua_Venta_Reparto',
     'SuperIce_Venta_Reparto',
+    'SuperIce_Promo_Reparto',
     'Comision_Reparto',
     'Agua_Diferencia',
     'SuperIce_Diferencia',
