@@ -49,6 +49,7 @@ jobs:
           test -f "$GITHUB_WORKSPACE/MonitorPedidos.gs" || (echo "MonitorPedidos.gs not found" && exit 1)
           test -f "$GITHUB_WORKSPACE/MonitorMake.gs" || (echo "MonitorMake.gs not found" && exit 1)
           test -f "$GITHUB_WORKSPACE/SYNC_CARGAS_OPSU.gs.js" || (echo "SYNC_CARGAS_OPSU.gs.js not found" && exit 1)
+          test -f "$GITHUB_WORKSPACE/CIERRES_REPARTO.js" || (echo "CIERRES_REPARTO.js not found" && exit 1)
           SHORT_SHA="${GITHUB_SHA::8}"
 
           rm -f /tmp/reparto-remote/MonitorPedidos.js /tmp/reparto-remote/MonitorPedidos.gs
@@ -74,6 +75,14 @@ jobs:
             echo
             cat "$GITHUB_WORKSPACE/SYNC_CARGAS_OPSU.gs.js"
           } > /tmp/reparto-remote/SYNC_CARGAS_OPSU.js
+
+          rm -f /tmp/reparto-remote/CIERRES_REPARTO.js /tmp/reparto-remote/CIERRES_REPARTO.gs
+          {
+            echo "// DEPLOY_VERSION: REPARTO-CIERRES-${SHORT_SHA}"
+            echo "// DEPLOYED_FROM_GITHUB: ${GITHUB_SHA}"
+            echo
+            cat "$GITHUB_WORKSPACE/CIERRES_REPARTO.js"
+          } > /tmp/reparto-remote/CIERRES_REPARTO.js
 
       - name: Integrate watchdogs and disable legacy Telegram monitor
         run: |
@@ -124,11 +133,12 @@ jobs:
           grep -q "hoy.getDay() === 6" /tmp/reparto-remote/SYNC_CARGAS_OPSU.js
           grep -q "function monitorPedidos" /tmp/reparto-remote/MonitorPedidos.js
           grep -q "function monitorMakeEscenarios" /tmp/reparto-remote/MonitorMake.js
+          grep -q "SuperIce_Promo_Reparto" /tmp/reparto-remote/CIERRES_REPARTO.js
           if grep -q "ejecutarMonitoreosCadaMinuto();" /tmp/reparto-remote/SYNC_CARGAS_OPSU.js; then
             echo "ERROR: legacy Telegram monitor is still called from Reparto central"
             exit 1
           fi
-          echo "Validation OK: Telegram migrated + CARGAS + webhook monitor + Make watchdog"
+          echo "Validation OK: Telegram migrated + CARGAS + CIERRES + webhook monitor + Make watchdog"
 
       - name: Push safe mirror to Apps Script
         run: |
