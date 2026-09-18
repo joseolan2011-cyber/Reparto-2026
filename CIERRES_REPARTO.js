@@ -1,6 +1,6 @@
 // ============================================================================
 // CIERRES_REPARTO.gs
-// VERSION 1.2 - CIERRE INDIVIDUAL POR VENDEDOR + RUTA DESDE PARAMETROS
+// VERSION 1.3 - PROMOS SUPERICE EN CIERRE + RUTA DESDE PARAMETROS
 // ============================================================================
 //
 // OBJETIVO DE ESTA ETAPA:
@@ -34,6 +34,7 @@
 // SuperIce_Cargado
 // SuperIce_Venta_OPSU
 // SuperIce_Venta_Reparto
+// SuperIce_Promo_Reparto
 // SuperIce_Devuelto
 // SuperIce_Diferencia
 // Venta_Total_Dinero
@@ -134,6 +135,8 @@ function CIERRES_REPARTO_probarHoy() {
           c.SuperIce_Venta_OPSU +
           ' | Ice venta Reparto: ' +
           c.SuperIce_Venta_Reparto +
+          ' | Ice promo: ' +
+          c.SuperIce_Promo_Reparto +
           '\n' +
           'Venta $: ' +
           CR_moneda_(
@@ -503,6 +506,9 @@ function CIERRES_REPARTO_probarVendedorSeleccionadoHoy() {
     '\n' +
     'SuperIce venta Reparto: ' +
     cierre.SuperIce_Venta_Reparto +
+    '\n' +
+    'SuperIce promo: ' +
+    cierre.SuperIce_Promo_Reparto +
     '\n' +
     'SuperIce devuelto: ' +
     cierre.SuperIce_Devuelto +
@@ -911,6 +917,14 @@ function CR_guardarCierreIndividual_(
   CR_set_(
     fila,
     h,
+    'SuperIce_Promo_Reparto',
+    cierre.SuperIce_Promo_Reparto
+  );
+
+
+  CR_set_(
+    fila,
+    h,
     'SuperIce_Devuelto',
     cierre.SuperIce_Devuelto
   );
@@ -1019,6 +1033,9 @@ function CR_guardarCierreIndividual_(
 
     Total_Cargas:
       cierre.Total_Cargas,
+
+    SuperIce_Promo_Reparto:
+      cierre.SuperIce_Promo_Reparto,
 
     Venta_Total_Dinero:
       cierre.Venta_Total_Dinero,
@@ -1720,6 +1737,14 @@ function CR_generarCierres_(
       CR_set_(
         fila,
         h,
+        'SuperIce_Promo_Reparto',
+        cierre.SuperIce_Promo_Reparto
+      );
+
+
+      CR_set_(
+        fila,
+        h,
         'SuperIce_Devuelto',
         cierre.SuperIce_Devuelto
       );
@@ -2078,6 +2103,12 @@ function CR_calcularCierres_(
         );
 
 
+      const icePromo =
+        CR_num_(
+          c.SuperIce_Promo_Reparto
+        );
+
+
       const aguaDiferencia =
         aguaOpsu -
         aguaReparto;
@@ -2085,7 +2116,8 @@ function CR_calcularCierres_(
 
       const iceDiferencia =
         iceOpsu -
-        iceReparto;
+        iceReparto -
+        icePromo;
 
 
       const cuadre =
@@ -2136,6 +2168,9 @@ function CR_calcularCierres_(
 
         SuperIce_Venta_Reparto:
           iceReparto,
+
+        SuperIce_Promo_Reparto:
+          icePromo,
 
         SuperIce_Devuelto:
           c.SuperIce_Devuelto,
@@ -2652,6 +2687,13 @@ function CR_leerCargas_(
     );
 
 
+  const cIcePromo =
+    CR_col_(
+      h,
+      'SuperIce_Promo_Reparto'
+    );
+
+
   for (
     let i = 1;
     i < data.length;
@@ -2795,6 +2837,9 @@ function CR_leerCargas_(
           0,
 
         SuperIce_Venta_OPSU:
+          0,
+
+        SuperIce_Promo_Reparto:
           0
 
       };
@@ -2871,6 +2916,14 @@ function CR_leerCargas_(
       CR_num_(
         fila[
           cIceOpsu
+        ]
+      );
+
+
+    x.SuperIce_Promo_Reparto +=
+      CR_num_(
+        fila[
+          cIcePromo
         ]
       );
 
@@ -3065,6 +3118,9 @@ function CR_cargaVacia_() {
       0,
 
     SuperIce_Venta_OPSU:
+      0,
+
+    SuperIce_Promo_Reparto:
       0
 
   };
@@ -3095,6 +3151,7 @@ function CR_validarCierres_(
     'SuperIce_Cargado',
     'SuperIce_Venta_OPSU',
     'SuperIce_Venta_Reparto',
+    'SuperIce_Promo_Reparto',
     'SuperIce_Devuelto',
     'SuperIce_Diferencia',
     'Venta_Total_Dinero',
