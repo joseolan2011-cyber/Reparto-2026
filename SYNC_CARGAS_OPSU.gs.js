@@ -1150,20 +1150,6 @@ function MONITOREO_CENTRAL_cadaMinuto() {
 
   try {
 
-    ejecutarMonitoreosCadaMinuto();
-
-  } catch (error) {
-
-    console.error(
-      'MONITOR CENTRAL - error en monitoreos existentes: ' +
-      error.stack
-    );
-
-  }
-
-
-  try {
-
     const resultadoCargas =
       CARGAS_OPSU_monitoreoCadaMinuto();
 
