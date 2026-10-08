@@ -132,6 +132,7 @@ jobs:
           from pathlib import Path
 
           candidates = [
+              Path('/tmp/reparto-remote/WEB_App.gs.js'),
               Path('/tmp/reparto-remote/WEB_App.js'),
               Path('/tmp/reparto-remote/WEB_App.gs'),
           ]
