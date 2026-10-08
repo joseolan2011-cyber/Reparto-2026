@@ -201,7 +201,8 @@ jobs:
           cd /tmp/reparto-remote
           clasp push --force
 
-      - name: Update existing Web App deployment
+      - name: List Apps Script deployments
         run: |
           cd /tmp/reparto-remote
-          clasp deploy -i "AKfycbzKPMfPLVnYmbyjjbyFa6kw5U-E5xuckJ859Ku28-widoeOgBRD1Z_SiutSea3aigf3Gg" -d "CIERRE-TEST-01"
+          echo "=== DEPLOYMENTS DEL PROYECTO ==="
+          clasp deployments
