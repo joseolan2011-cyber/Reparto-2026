@@ -130,7 +130,6 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
           candidates = [
               Path('/tmp/reparto-remote/WEB_App.gs.js'),
@@ -143,40 +142,11 @@ jobs:
 
           text = path.read_text(encoding='utf-8')
 
-          # IMPORTANT: ?cierre= belongs to the pre-existing detailed report.
-          # Our new route must only answer ?reporte=cargas.
-          text = text.replace(
-              """  if (
-    String(
-      params.reporte ||
-      ''
-    ).toLowerCase() ===
-      'cargas' ||
-    params.cierre
-  ) {
+          old = "  if (\n    String(\n      params.reporte ||\n      ''\n    ).toLowerCase() ===\n      'cargas' ||\n    params.cierre\n  ) {\n\n    return CIERRES_REPARTO_renderReporteCargasWeb(\n      params.id_cierre ||\n      params.cierre ||\n      ''\n    );\n\n  }"
+          new = "  if (\n    String(\n      params.reporte ||\n      ''\n    ).toLowerCase() ===\n    'cargas'\n  ) {\n\n    return CIERRES_REPARTO_renderReporteCargasWeb(\n      params.id_cierre ||\n      ''\n    );\n\n  }"
 
-    return CIERRES_REPARTO_renderReporteCargasWeb(
-      params.id_cierre ||
-      params.cierre ||
-      ''
-    );
-
-  }""",
-              """  if (
-    String(
-      params.reporte ||
-      ''
-    ).toLowerCase() ===
-    'cargas'
-  ) {
-
-    return CIERRES_REPARTO_renderReporteCargasWeb(
-      params.id_cierre ||
-      ''
-    );
-
-  }"""
-          )
+          if old in text:
+              text = text.replace(old, new, 1)
 
           path.write_text(text, encoding='utf-8')
           print(f'Ruta ?cierre restaurada para el reporte existente en {path.name}')
@@ -198,9 +168,10 @@ jobs:
                       if ('Cierre detallado' in line or
                           'Consolidado final por precio' in line or
                           'precios tomados de GIROS' in line):
-                          lo=max(1,i-35); hi=min(len(lines),i+120)
+                          lo = max(1, i - 35)
+                          hi = min(len(lines), i + 120)
                           print(f'--- {p.name}:{lo}-{hi} ---')
-                          for n in range(lo,hi+1):
+                          for n in range(lo, hi + 1):
                               print(f'{n:05d}: {lines[n-1]}')
           PY
 
