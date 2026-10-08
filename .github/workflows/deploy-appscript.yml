@@ -148,8 +148,13 @@ jobs:
           if old in text:
               text = text.replace(old, new, 1)
 
+          text = text.replace("const WEB_VERSION = '0.2.2';", "const WEB_VERSION = 'CIERRE-TEST-01';")
+          text = text.replace('color:#758096;', 'color:#b42318;')
+          text = text.replace('background:rgba(255,255,255,.88);', 'background:#fff1f0;')
+          text = text.replace('border:1px solid #e5e9f0;', 'border:2px solid #f04438;')
+
           path.write_text(text, encoding='utf-8')
-          print(f'Ruta ?cierre restaurada para el reporte existente en {path.name}')
+          print(f'Ruta ?cierre restaurada y version CIERRE-TEST-01 aplicada en {path.name}')
 
           print('=== UBICACION GENERADOR CIERRE DETALLADO ===')
           for p in Path('/tmp/reparto-remote').glob('*'):
@@ -195,3 +200,8 @@ jobs:
         run: |
           cd /tmp/reparto-remote
           clasp push --force
+
+      - name: Update existing Web App deployment
+        run: |
+          cd /tmp/reparto-remote
+          clasp deploy -i "AKfycbzKPMfPLVnYmbyjjbyFa6kw5U-E5xuckJ859Ku28-widee0gBRDI2_SiutSea3ajgf3Gg" -d "CIERRE-TEST-01"
