@@ -1,17 +1,19 @@
-name: Diagnose Reparto Apps Script history
+name: Deploy Reparto 2026 to Apps Script
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 concurrency:
   group: reparto-2026-appscript-deploy
   cancel-in-progress: true
 
 jobs:
-  diagnose:
+  deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,25 +33,175 @@ jobs:
           test -n "$CLASP_CREDENTIALS" || (echo "Missing CLASP_CREDENTIALS secret" && exit 1)
           printf '%s' "$CLASP_CREDENTIALS" > "$HOME/.clasprc.json"
 
-      - name: Search historical Apps Script versions for cierre detailed report
+      - name: Pull current Apps Script project
         env:
           APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
         run: |
-          set +e
-          echo "=== CLASP VERSION ==="
-          clasp --version
-          echo "=== PROJECT VERSIONS ==="
-          rm -rf /tmp/reparto-history
-          mkdir -p /tmp/reparto-history
-          cd /tmp/reparto-history
+          test -n "$APPS_SCRIPT_ID" || (echo "Missing APPS_SCRIPT_ID secret" && exit 1)
+          rm -rf /tmp/reparto-remote
+          mkdir -p /tmp/reparto-remote
+          cd /tmp/reparto-remote
           printf '{"scriptId":"%s","rootDir":"."}\n' "$APPS_SCRIPT_ID" > .clasp.json
-          clasp versions
+          clasp pull
 
-          echo "=== PULL VERSION 151 ==="
-          rm -f ./*.js ./*.html ./appsscript.json
-          clasp pull --versionNumber 151
-          echo "=== FILES VERSION 151 ==="
-          ls -lah
-          echo "=== BROAD CIERRE SEARCH VERSION 151 ==="
-          grep -RniE "cierre|folios del d[ií]a|comisi[oó]n mostrada|ARIS BOLSA|venta total|GPS OK" . --include='*.js' --include='*.html' || true
-          echo "=== DIAGNOSTIC COMPLETE - NO PUSH PERFORMED ==="
+      - name: Overlay managed modules from GitHub
+        run: |
+          test -f "$GITHUB_WORKSPACE/MonitorPedidos.gs" || (echo "MonitorPedidos.gs not found" && exit 1)
+          test -f "$GITHUB_WORKSPACE/MonitorMake.gs" || (echo "MonitorMake.gs not found" && exit 1)
+          test -f "$GITHUB_WORKSPACE/SYNC_CARGAS_OPSU.gs.js" || (echo "SYNC_CARGAS_OPSU.gs.js not found" && exit 1)
+          test -f "$GITHUB_WORKSPACE/CIERRES_REPARTO.js" || (echo "CIERRES_REPARTO.js not found" && exit 1)
+          SHORT_SHA="${GITHUB_SHA::8}"
+
+          rm -f /tmp/reparto-remote/MonitorPedidos.js /tmp/reparto-remote/MonitorPedidos.gs
+          {
+            echo "// DEPLOY_VERSION: REPARTO-MONITOR-${SHORT_SHA}"
+            echo "// DEPLOYED_FROM_GITHUB: ${GITHUB_SHA}"
+            echo
+            cat "$GITHUB_WORKSPACE/MonitorPedidos.gs"
+          } > /tmp/reparto-remote/MonitorPedidos.js
+
+          rm -f /tmp/reparto-remote/MonitorMake.js /tmp/reparto-remote/MonitorMake.gs
+          {
+            echo "// DEPLOY_VERSION: REPARTO-MAKE-WATCHDOG-${SHORT_SHA}"
+            echo "// DEPLOYED_FROM_GITHUB: ${GITHUB_SHA}"
+            echo
+            cat "$GITHUB_WORKSPACE/MonitorMake.gs"
+          } > /tmp/reparto-remote/MonitorMake.js
+
+          rm -f /tmp/reparto-remote/SYNC_CARGAS_OPSU.js /tmp/reparto-remote/SYNC_CARGAS_OPSU.gs
+          {
+            echo "// DEPLOY_VERSION: REPARTO-CARGAS-${SHORT_SHA}"
+            echo "// DEPLOYED_FROM_GITHUB: ${GITHUB_SHA}"
+            echo
+            cat "$GITHUB_WORKSPACE/SYNC_CARGAS_OPSU.gs.js"
+          } > /tmp/reparto-remote/SYNC_CARGAS_OPSU.js
+
+          rm -f /tmp/reparto-remote/CIERRES_REPARTO.js /tmp/reparto-remote/CIERRES_REPARTO.gs
+          {
+            echo "// DEPLOY_VERSION: REPARTO-CIERRES-${SHORT_SHA}"
+            echo "// DEPLOYED_FROM_GITHUB: ${GITHUB_SHA}"
+            echo
+            cat "$GITHUB_WORKSPACE/CIERRES_REPARTO.js"
+          } > /tmp/reparto-remote/CIERRES_REPARTO.js
+
+      - name: Integrate watchdogs and disable legacy Telegram monitor
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('/tmp/reparto-remote/SYNC_CARGAS_OPSU.js')
+          if not path.exists():
+              raise SystemExit('SYNC_CARGAS_OPSU.js not found after overlay')
+
+          text = path.read_text(encoding='utf-8')
+
+          # Telegram ya vive en el proyecto independiente Pedidos_Telegram.
+          # Conservamos el código legacy en Reparto para rollback, pero dejamos de ejecutarlo
+          # desde el monitor central para evitar dobles envíos, dobles retrasos y carreras.
+          legacy = """  try {\n\n    ejecutarMonitoreosCadaMinuto();\n\n  } catch (error) {\n\n    console.error(\n      'MONITOR CENTRAL - error en monitoreos existentes: ' +\n      error.stack\n    );\n\n  }\n\n\n"""
+          if legacy in text:
+              text = text.replace(
+                  legacy,
+                  """  // TELEGRAM MIGRADO A Pedidos_Telegram\n  // El monitor legacy ejecutarMonitoreosCadaMinuto() se conserva en el proyecto\n  // únicamente como respaldo y NO se ejecuta desde Reparto.\n\n\n""",
+                  1
+              )
+
+          # Insert both watchdogs immediately before the CARGAS_OPSU cycle.
+          if 'monitorPedidos();' not in text or 'monitorMakeEscenarios(false);' not in text:
+              old = """  try {\n\n    const resultadoCargas =\n      CARGAS_OPSU_monitoreoCadaMinuto();\n"""
+              block = """  // MONITOR PEDIDOS WHATSAPP\n  try {\n\n    monitorPedidos();\n\n  } catch (error) {\n\n    console.error(\n      'MONITOR CENTRAL - error en monitorPedidos: ' +\n      error.stack\n    );\n\n  }\n\n\n  // MONITOR MAKE ESCENARIOS\n  try {\n\n    monitorMakeEscenarios(false);\n\n  } catch (error) {\n\n    console.error(\n      'MONITOR CENTRAL - error en monitorMakeEscenarios: ' +\n      error.stack\n    );\n\n  }\n\n\n  // CARGAS OPSU\n  try {\n\n    const resultadoCargas =\n      CARGAS_OPSU_monitoreoCadaMinuto();\n"""
+              if old not in text:
+                  raise SystemExit('Could not find CARGAS_OPSU execution block in MONITOREO_CENTRAL_cadaMinuto')
+              text = text.replace(old, block, 1)
+
+          # Ensure installer removes any old independent Telegram/monitorPedidos triggers.
+          if "handler ===\n            'monitorPedidos'" not in text and "handler === 'monitorPedidos'" not in text:
+              old = """          handler ===\n            'ejecutarMonitoreosCadaMinuto' ||\n          handler ===\n            'CARGAS_OPSU_monitoreoCadaMinuto' ||\n"""
+              new = """          handler ===\n            'ejecutarMonitoreosCadaMinuto' ||\n          handler ===\n            'monitorPedidos' ||\n          handler ===\n            'CARGAS_OPSU_monitoreoCadaMinuto' ||\n"""
+              if old not in text:
+                  raise SystemExit('Could not find trigger cleanup block in CARGAS_OPSU_instalarMonitoreo1Minuto')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding='utf-8')
+          print('Reparto central listo: Telegram legacy desactivado; watchdogs preservados')
+          PY
+
+      - name: Restore existing cierre link and locate detailed report generator
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          candidates = [
+              Path('/tmp/reparto-remote/WEB_App.gs.js'),
+              Path('/tmp/reparto-remote/WEB_App.js'),
+              Path('/tmp/reparto-remote/WEB_App.gs'),
+          ]
+          path = next((p for p in candidates if p.exists()), None)
+          if path is None:
+              raise SystemExit('WEB_App file not found in pulled Apps Script project')
+
+          text = path.read_text(encoding='utf-8')
+
+          old = "  if (\n    String(\n      params.reporte ||\n      ''\n    ).toLowerCase() ===\n      'cargas' ||\n    params.cierre\n  ) {\n\n    return CIERRES_REPARTO_renderReporteCargasWeb(\n      params.id_cierre ||\n      params.cierre ||\n      ''\n    );\n\n  }"
+          new = "  if (\n    String(\n      params.reporte ||\n      ''\n    ).toLowerCase() ===\n    'cargas'\n  ) {\n\n    return CIERRES_REPARTO_renderReporteCargasWeb(\n      params.id_cierre ||\n      ''\n    );\n\n  }"
+
+          if old in text:
+              text = text.replace(old, new, 1)
+
+          text = text.replace("const WEB_VERSION = '0.2.2';", "const WEB_VERSION = 'CIERRE-TEST-01';")
+          text = text.replace('color:#758096;', 'color:#b42318;')
+          text = text.replace('background:rgba(255,255,255,.88);', 'background:#fff1f0;')
+          text = text.replace('border:1px solid #e5e9f0;', 'border:2px solid #f04438;')
+
+          path.write_text(text, encoding='utf-8')
+          print(f'Ruta ?cierre restaurada y version CIERRE-TEST-01 aplicada en {path.name}')
+
+          print('=== UBICACION GENERADOR CIERRE DETALLADO ===')
+          for p in Path('/tmp/reparto-remote').glob('*'):
+              if not p.is_file():
+                  continue
+              try:
+                  t = p.read_text(encoding='utf-8')
+              except Exception:
+                  continue
+              if ('Cierre detallado' in t or
+                  'Consolidado final por precio' in t or
+                  'precios tomados de GIROS' in t):
+                  print(f'FILE={p.name}')
+                  lines = t.splitlines()
+                  for i, line in enumerate(lines, 1):
+                      if ('Cierre detallado' in line or
+                          'Consolidado final por precio' in line or
+                          'precios tomados de GIROS' in line):
+                          lo = max(1, i - 35)
+                          hi = min(len(lines), i + 120)
+                          print(f'--- {p.name}:{lo}-{hi} ---')
+                          for n in range(lo, hi + 1):
+                              print(f'{n:05d}: {lines[n-1]}')
+          PY
+
+      - name: Validate critical modules before push
+        run: |
+          grep -q "monitorPedidos();" /tmp/reparto-remote/SYNC_CARGAS_OPSU.js
+          grep -q "monitorMakeEscenarios(false);" /tmp/reparto-remote/SYNC_CARGAS_OPSU.js
+          grep -q "hoy.getDay() === 6" /tmp/reparto-remote/SYNC_CARGAS_OPSU.js
+          grep -q "function monitorPedidos" /tmp/reparto-remote/MonitorPedidos.js
+          grep -q "function monitorMakeEscenarios" /tmp/reparto-remote/MonitorMake.js
+          grep -q "SuperIce_Promo_Reparto" /tmp/reparto-remote/CIERRES_REPARTO.js
+          grep -q "CIERRES_REPARTO_renderReporteCargasWeb" /tmp/reparto-remote/CIERRES_REPARTO.js
+          grep -Rq "CIERRES_REPARTO_renderReporteCargasWeb" /tmp/reparto-remote/WEB_App.*
+          if grep -q "ejecutarMonitoreosCadaMinuto();" /tmp/reparto-remote/SYNC_CARGAS_OPSU.js; then
+            echo "ERROR: legacy Telegram monitor is still called from Reparto central"
+            exit 1
+          fi
+          echo "Validation OK: Telegram migrated + CARGAS + CIERRES + webhook monitor + Make watchdog"
+
+      - name: Push safe mirror to Apps Script
+        run: |
+          cd /tmp/reparto-remote
+          clasp push --force
+
+      - name: Update confirmed Web App deployment
+        run: |
+          cd /tmp/reparto-remote
+          clasp deploy -i "AKfycbwVDGVeW4nPgt6cIahF9NpzGfvLJm2TE7gYX6CVfsAGDbsPih23BhpaNTyIjV6iJGsRyg" -d "CIERRE-TEST-01"
