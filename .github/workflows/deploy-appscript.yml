@@ -126,6 +126,32 @@ jobs:
           print('Reparto central listo: Telegram legacy desactivado; watchdogs preservados')
           PY
 
+      - name: Integrate dynamic cierre report route
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          candidates = [
+              Path('/tmp/reparto-remote/WEB_App.js'),
+              Path('/tmp/reparto-remote/WEB_App.gs'),
+          ]
+          path = next((p for p in candidates if p.exists()), None)
+          if path is None:
+              raise SystemExit('WEB_App file not found in pulled Apps Script project')
+
+          text = path.read_text(encoding='utf-8')
+          marker = 'CIERRES_REPARTO_renderReporteCargasWeb'
+          if marker not in text:
+              old = 'function doGet(e) {\n'
+              new = '''function doGet(e) {\n\n  const params =\n    e && e.parameter\n      ? e.parameter\n      : {};\n\n\n  if (\n    String(\n      params.reporte ||\n      ''\n    ).toLowerCase() ===\n    'cargas'\n  ) {\n\n    return CIERRES_REPARTO_renderReporteCargasWeb(\n      params.id_cierre ||\n      ''\n    );\n\n  }\n'''
+              if old not in text:
+                  raise SystemExit('Could not find doGet(e) in WEB_App')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding='utf-8')
+          print(f'Ruta dinámica de cierre integrada en {path.name}')
+          PY
+
       - name: Validate critical modules before push
         run: |
           grep -q "monitorPedidos();" /tmp/reparto-remote/SYNC_CARGAS_OPSU.js
@@ -134,6 +160,8 @@ jobs:
           grep -q "function monitorPedidos" /tmp/reparto-remote/MonitorPedidos.js
           grep -q "function monitorMakeEscenarios" /tmp/reparto-remote/MonitorMake.js
           grep -q "SuperIce_Promo_Reparto" /tmp/reparto-remote/CIERRES_REPARTO.js
+          grep -q "CIERRES_REPARTO_renderReporteCargasWeb" /tmp/reparto-remote/CIERRES_REPARTO.js
+          grep -Rq "CIERRES_REPARTO_renderReporteCargasWeb" /tmp/reparto-remote/WEB_App.*
           if grep -q "ejecutarMonitoreosCadaMinuto();" /tmp/reparto-remote/SYNC_CARGAS_OPSU.js; then
             echo "ERROR: legacy Telegram monitor is still called from Reparto central"
             exit 1
