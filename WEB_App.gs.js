@@ -7,7 +7,7 @@
 // NO interfiere con doPost() ni con Telegram / Make.
 // ============================================================
 
-const WEB_VERSION = 'CIERRE-TEST-01';
+const WEB_VERSION = '0.2.1';
 
 
 /**
@@ -21,27 +21,6 @@ const WEB_VERSION = 'CIERRE-TEST-01';
  * esquina superior derecha del reporte.
  */
 function doGet(e) {
-
-  const params =
-    e && e.parameter
-      ? e.parameter
-      : {};
-
-
-  if (
-    String(
-      params.reporte ||
-      ''
-    ).toLowerCase() ===
-    'cargas'
-  ) {
-
-    return CIERRES_REPARTO_renderReporteCargasWeb(
-      params.id_cierre ||
-      ''
-    );
-
-  }
 
   const index =
     HtmlService
@@ -71,9 +50,9 @@ function doGet(e) {
         'font-size:10px;' +
         'font-weight:700;' +
         'letter-spacing:.3px;' +
-        'color:#b42318;' +
-        'background:#fff1f0;' +
-        'border:2px solid #f04438;' +
+        'color:#758096;' +
+        'background:rgba(255,255,255,.88);' +
+        'border:1px solid #e5e9f0;' +
         'border-radius:999px;' +
         'padding:4px 8px;' +
         'box-shadow:0 2px 8px rgba(15,23,42,.06);' +
