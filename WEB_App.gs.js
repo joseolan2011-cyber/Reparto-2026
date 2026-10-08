@@ -33,11 +33,13 @@ function doGet(e) {
       params.reporte ||
       ''
     ).toLowerCase() ===
-    'cargas'
+      'cargas' ||
+    params.cierre
   ) {
 
     return CIERRES_REPARTO_renderReporteCargasWeb(
       params.id_cierre ||
+      params.cierre ||
       ''
     );
 
