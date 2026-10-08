@@ -378,6 +378,32 @@ function CIERRES_REPARTO_generarCierreVendedor(
     );
 
 
+  // Extras de cierre: ticket de ventas de agua a $20 y reporte por carga.
+  // Nunca bloquean el cierre principal si fallan.
+  try {
+
+    const extras =
+      CR_generarExtrasCierre_(
+        fechaKey,
+        cierre
+      );
+
+    resultado.Ticket_20 =
+      extras.Ticket_20 || '';
+
+    resultado.Reporte_Cargas =
+      extras.Reporte_Cargas || '';
+
+  } catch (error) {
+
+    console.error(
+      'CIERRES_REPARTO - extras no generados: ' +
+      error.stack
+    );
+
+  }
+
+
   resultado.segundos =
     (
       (
@@ -3168,6 +3194,1504 @@ function CR_validarCierres_(
         campo
       )
   );
+
+}
+
+
+// ============================================================================
+// EXTRAS DE CIERRE
+// - Ticket independiente de ventas de AGUA cuyo Precio_Agua en GIROS sea $20.
+// - Reporte HTML con todas las cargas del día y subtotal de ventas por carga.
+// - No altera el cálculo principal del cierre.
+// ============================================================================
+
+function CR_generarExtrasCierre_(
+  fechaKey,
+  cierre
+) {
+
+  const ventas20 =
+    CR_leerVentasPrecio20_(
+      fechaKey,
+      cierre.id_vendedor
+    );
+
+
+  const cargas =
+    CR_leerDetalleCargasConSubtotales_(
+      fechaKey,
+      cierre.id_vendedor
+    );
+
+
+  const carpeta =
+    CR_obtenerCarpetaTickets_();
+
+
+  const ticket20 =
+    CR_crearTicket20Pdf_(
+      carpeta,
+      fechaKey,
+      cierre,
+      ventas20
+    );
+
+
+  const reporteCargas =
+    CR_crearReporteCargasHtml_(
+      carpeta,
+      fechaKey,
+      cierre,
+      cargas
+    );
+
+
+  CR_guardarExtrasEnCierre_(
+    fechaKey,
+    cierre.Ruta,
+    cierre.id_vendedor,
+    ticket20.ruta,
+    reporteCargas.url
+  );
+
+
+  return {
+
+    Ticket_20:
+      ticket20.ruta,
+
+    Reporte_Cargas:
+      reporteCargas.url,
+
+    ventas20:
+      ventas20.length,
+
+    cargas:
+      cargas.length
+
+  };
+
+}
+
+
+function CR_leerVentasPrecio20_(
+  fechaKey,
+  idVendedor
+) {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const shVentas =
+    ss.getSheetByName(
+      CR_CFG.HOJA_VENTAS
+    );
+
+
+  const shGiros =
+    ss.getSheetByName(
+      'GIROS'
+    );
+
+
+  if (
+    !shVentas ||
+    !shGiros
+  ) {
+
+    throw new Error(
+      'Falta VENTAS o GIROS para generar Ticket_20.'
+    );
+
+  }
+
+
+  const girosData =
+    shGiros
+      .getDataRange()
+      .getValues();
+
+
+  const hg =
+    CR_headers_(
+      girosData[0]
+    );
+
+
+  const cgGiro =
+    CR_col_(
+      hg,
+      'Giro'
+    );
+
+
+  const cgPrecio =
+    CR_col_(
+      hg,
+      'Precio_Agua'
+    );
+
+
+  const giros20 =
+    new Set();
+
+
+  for (
+    let i = 1;
+    i < girosData.length;
+    i++
+  ) {
+
+    const giro =
+      CR_norm_(
+        girosData[i][
+          cgGiro
+        ]
+      );
+
+
+    const precio =
+      CR_num_(
+        girosData[i][
+          cgPrecio
+        ]
+      );
+
+
+    if (
+      giro &&
+      precio === 20
+    ) {
+
+      giros20.add(
+        giro
+      );
+
+    }
+
+  }
+
+
+  const data =
+    shVentas
+      .getDataRange()
+      .getValues();
+
+
+  const h =
+    CR_headers_(
+      data[0]
+    );
+
+
+  const cFecha =
+    CR_colMulti_(
+      h,
+      [
+        'Fecha',
+        'fecha_hora'
+      ]
+    );
+
+
+  const cVendedor =
+    CR_col_(
+      h,
+      'id_vendedor'
+    );
+
+
+  const cCliente =
+    CR_col_(
+      h,
+      'Cliente'
+    );
+
+
+  const cGiro =
+    CR_col_(
+      h,
+      'giro'
+    );
+
+
+  const cAgua =
+    CR_colMulti_(
+      h,
+      [
+        'Agua 20 Litros',
+        'Agua 20 Litros '
+      ]
+    );
+
+
+  const cFolio =
+    CR_col_(
+      h,
+      'IDCarga_ref'
+    );
+
+
+  const salida = [];
+
+
+  for (
+    let i = 1;
+    i < data.length;
+    i++
+  ) {
+
+    const fila =
+      data[i];
+
+
+    if (
+      CR_fechaKeySeguro_(
+        fila[
+          cFecha
+        ]
+      ) !==
+      fechaKey
+    ) {
+
+      continue;
+
+    }
+
+
+    if (
+      CR_txt_(
+        fila[
+          cVendedor
+        ]
+      ).toLowerCase() !==
+      CR_txt_(
+        idVendedor
+      ).toLowerCase()
+    ) {
+
+      continue;
+
+    }
+
+
+    const giro =
+      CR_norm_(
+        fila[
+          cGiro
+        ]
+      );
+
+
+    if (
+      !giros20.has(
+        giro
+      )
+    ) {
+
+      continue;
+
+    }
+
+
+    const cantidad =
+      CR_num_(
+        fila[
+          cAgua
+        ]
+      );
+
+
+    if (
+      cantidad <=
+      0
+    ) {
+
+      continue;
+
+    }
+
+
+    salida.push({
+
+      Cliente:
+        CR_txt_(
+          fila[
+            cCliente
+          ]
+        ) ||
+        'SIN NOMBRE',
+
+      Cantidad:
+        cantidad,
+
+      Precio:
+        20,
+
+      Subtotal:
+        cantidad *
+        20,
+
+      Folio:
+        CR_txt_(
+          fila[
+            cFolio
+          ]
+        )
+
+    });
+
+  }
+
+
+  return salida;
+
+}
+
+
+function CR_leerDetalleCargasConSubtotales_(
+  fechaKey,
+  idVendedor
+) {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const shCargas =
+    ss.getSheetByName(
+      CR_CFG.HOJA_CARGAS
+    );
+
+
+  const shVentas =
+    ss.getSheetByName(
+      CR_CFG.HOJA_VENTAS
+    );
+
+
+  if (
+    !shCargas ||
+    !shVentas
+  ) {
+
+    throw new Error(
+      'Falta CARGAS_OPSU o VENTAS para generar reporte por carga.'
+    );
+
+  }
+
+
+  const subtotales = {};
+
+
+  const ventas =
+    shVentas
+      .getDataRange()
+      .getValues();
+
+
+  const hv =
+    CR_headers_(
+      ventas[0]
+    );
+
+
+  const vFecha =
+    CR_colMulti_(
+      hv,
+      [
+        'Fecha',
+        'fecha_hora'
+      ]
+    );
+
+
+  const vVendedor =
+    CR_col_(
+      hv,
+      'id_vendedor'
+    );
+
+
+  const vFolio =
+    CR_col_(
+      hv,
+      'IDCarga_ref'
+    );
+
+
+  const vImporte =
+    CR_col_(
+      hv,
+      'Importe'
+    );
+
+
+  const vComision =
+    CR_col_(
+      hv,
+      'Comision'
+    );
+
+
+  for (
+    let i = 1;
+    i < ventas.length;
+    i++
+  ) {
+
+    const fila =
+      ventas[i];
+
+
+    if (
+      CR_fechaKeySeguro_(
+        fila[
+          vFecha
+        ]
+      ) !==
+      fechaKey
+    ) {
+
+      continue;
+
+    }
+
+
+    if (
+      CR_txt_(
+        fila[
+          vVendedor
+        ]
+      ).toLowerCase() !==
+      CR_txt_(
+        idVendedor
+      ).toLowerCase()
+    ) {
+
+      continue;
+
+    }
+
+
+    const folio =
+      CR_txt_(
+        fila[
+          vFolio
+        ]
+      );
+
+
+    if (
+      !folio
+    ) {
+
+      continue;
+
+    }
+
+
+    if (
+      !subtotales[
+        folio
+      ]
+    ) {
+
+      subtotales[
+        folio
+      ] = {
+        venta:
+          0,
+        comision:
+          0
+      };
+
+    }
+
+
+    subtotales[
+      folio
+    ].venta +=
+      CR_num_(
+        fila[
+          vImporte
+        ]
+      );
+
+
+    subtotales[
+      folio
+    ].comision +=
+      CR_num_(
+        fila[
+          vComision
+        ]
+      );
+
+  }
+
+
+  const cargas =
+    shCargas
+      .getDataRange()
+      .getValues();
+
+
+  const h =
+    CR_headers_(
+      cargas[0]
+    );
+
+
+  const cFecha =
+    CR_col_(
+      h,
+      'Fecha_Operacion'
+    );
+
+
+  const cVendedor =
+    CR_col_(
+      h,
+      'id_vendedor'
+    );
+
+
+  const cTipo =
+    CR_col_(
+      h,
+      'Tipo_Operacion'
+    );
+
+
+  const cFolio =
+    CR_col_(
+      h,
+      'Folio'
+    );
+
+
+  const cNoCarga =
+    CR_col_(
+      h,
+      'No_Carga'
+    );
+
+
+  const cAguaCarga =
+    CR_col_(
+      h,
+      'Agua_Cargada'
+    );
+
+
+  const cAguaVenta =
+    CR_col_(
+      h,
+      'Agua_Venta_Reparto'
+    );
+
+
+  const cAguaDev =
+    CR_col_(
+      h,
+      'Agua_Devuelta'
+    );
+
+
+  const cIceCarga =
+    CR_col_(
+      h,
+      'SuperIce_Cargado'
+    );
+
+
+  const cIceVenta =
+    CR_col_(
+      h,
+      'SuperIce_Venta_Reparto'
+    );
+
+
+  const cIcePromo =
+    CR_col_(
+      h,
+      'SuperIce_Promo_Reparto'
+    );
+
+
+  const cIceDev =
+    CR_col_(
+      h,
+      'SuperIce_Devuelto'
+    );
+
+
+  const salida = [];
+
+
+  for (
+    let i = 1;
+    i < cargas.length;
+    i++
+  ) {
+
+    const fila =
+      cargas[i];
+
+
+    if (
+      CR_norm_(
+        fila[
+          cTipo
+        ]
+      ) !==
+      'reparto'
+    ) {
+
+      continue;
+
+    }
+
+
+    if (
+      CR_fechaKeySeguro_(
+        fila[
+          cFecha
+        ]
+      ) !==
+      fechaKey
+    ) {
+
+      continue;
+
+    }
+
+
+    if (
+      CR_txt_(
+        fila[
+          cVendedor
+        ]
+      ).toLowerCase() !==
+      CR_txt_(
+        idVendedor
+      ).toLowerCase()
+    ) {
+
+      continue;
+
+    }
+
+
+    const folio =
+      CR_txt_(
+        fila[
+          cFolio
+        ]
+      );
+
+
+    const subtotal =
+      subtotales[
+        folio
+      ] ||
+      {
+        venta:
+          0,
+        comision:
+          0
+      };
+
+
+    salida.push({
+
+      No_Carga:
+        CR_num_(
+          fila[
+            cNoCarga
+          ]
+        ),
+
+      Folio:
+        folio,
+
+      Agua_Cargada:
+        CR_num_(
+          fila[
+            cAguaCarga
+          ]
+        ),
+
+      Agua_Venta_Reparto:
+        CR_num_(
+          fila[
+            cAguaVenta
+          ]
+        ),
+
+      Agua_Devuelta:
+        CR_num_(
+          fila[
+            cAguaDev
+          ]
+        ),
+
+      SuperIce_Cargado:
+        CR_num_(
+          fila[
+            cIceCarga
+          ]
+        ),
+
+      SuperIce_Venta_Reparto:
+        CR_num_(
+          fila[
+            cIceVenta
+          ]
+        ),
+
+      SuperIce_Promo_Reparto:
+        CR_num_(
+          fila[
+            cIcePromo
+          ]
+        ),
+
+      SuperIce_Devuelto:
+        CR_num_(
+          fila[
+            cIceDev
+          ]
+        ),
+
+      Venta_Dinero:
+        subtotal.venta,
+
+      Comision:
+        subtotal.comision
+
+    });
+
+  }
+
+
+  salida.sort(
+    (a, b) =>
+      a.No_Carga -
+      b.No_Carga
+  );
+
+
+  return salida;
+
+}
+
+
+function CR_obtenerCarpetaTickets_() {
+
+  const nombre =
+    'Tickets Cierres Reparto';
+
+
+  const encontradas =
+    DriveApp
+      .getFoldersByName(
+        nombre
+      );
+
+
+  if (
+    encontradas.hasNext()
+  ) {
+
+    return encontradas.next();
+
+  }
+
+
+  const ssFile =
+    DriveApp.getFileById(
+      SpreadsheetApp
+        .getActiveSpreadsheet()
+        .getId()
+    );
+
+
+  const padres =
+    ssFile.getParents();
+
+
+  if (
+    padres.hasNext()
+  ) {
+
+    return padres
+      .next()
+      .createFolder(
+        nombre
+      );
+
+  }
+
+
+  return DriveApp
+    .createFolder(
+      nombre
+    );
+
+}
+
+
+function CR_reemplazarArchivo_(
+  carpeta,
+  nombre,
+  blob
+) {
+
+  const existentes =
+    carpeta.getFilesByName(
+      nombre
+    );
+
+
+  while (
+    existentes.hasNext()
+  ) {
+
+    existentes
+      .next()
+      .setTrashed(
+        true
+      );
+
+  }
+
+
+  return carpeta
+    .createFile(
+      blob.setName(
+        nombre
+      )
+    );
+
+}
+
+
+function CR_crearTicket20Pdf_(
+  carpeta,
+  fechaKey,
+  cierre,
+  ventas20
+) {
+
+  const totalPiezas =
+    ventas20.reduce(
+      (s, x) =>
+        s +
+        x.Cantidad,
+      0
+    );
+
+
+  const totalDinero =
+    ventas20.reduce(
+      (s, x) =>
+        s +
+        x.Subtotal,
+      0
+    );
+
+
+  let filas = '';
+
+
+  ventas20.forEach(
+    x => {
+
+      filas +=
+        '<tr>' +
+          '<td>' +
+            CR_html_(
+              x.Cliente
+            ) +
+          '</td>' +
+          '<td class="n">' +
+            x.Cantidad +
+          '</td>' +
+          '<td class="n">$20</td>' +
+          '<td class="n">' +
+            CR_moneda_(
+              x.Subtotal
+            ) +
+          '</td>' +
+        '</tr>';
+
+    }
+  );
+
+
+  if (
+    !filas
+  ) {
+
+    filas =
+      '<tr><td colspan="4" class="vacio">SIN VENTAS DE AGUA A $20</td></tr>';
+
+  }
+
+
+  const html =
+    '<!doctype html><html><head><meta charset="utf-8">' +
+    '<style>' +
+      '@page{size:58mm auto;margin:2mm}' +
+      'body{font-family:Arial,sans-serif;width:54mm;margin:0;font-size:9px;color:#000}' +
+      'h1{font-size:13px;text-align:center;margin:0 0 3px}' +
+      '.sub{text-align:center;font-size:9px;margin-bottom:6px}' +
+      'table{width:100%;border-collapse:collapse}' +
+      'th,td{padding:2px 1px;border-bottom:1px dashed #aaa;vertical-align:top}' +
+      'th{font-size:8px;text-align:left}' +
+      '.n{text-align:right;white-space:nowrap}' +
+      '.tot{font-weight:bold;font-size:10px}' +
+      '.vacio{text-align:center;padding:8px 0}' +
+    '</style></head><body>' +
+      '<h1>VENTAS DE AGUA A $20</h1>' +
+      '<div class="sub">' +
+        'Ruta ' +
+        CR_html_(
+          cierre.Ruta
+        ) +
+        ' · ' +
+        CR_html_(
+          fechaKey
+        ) +
+      '</div>' +
+      '<table>' +
+        '<thead><tr><th>Cliente</th><th class="n">Cant</th><th class="n">Precio</th><th class="n">Subt.</th></tr></thead>' +
+        '<tbody>' +
+          filas +
+        '</tbody>' +
+        '<tfoot>' +
+          '<tr class="tot"><td>TOTAL</td><td class="n">' +
+            totalPiezas +
+          '</td><td></td><td class="n">' +
+            CR_moneda_(
+              totalDinero
+            ) +
+          '</td></tr>' +
+        '</tfoot>' +
+      '</table>' +
+    '</body></html>';
+
+
+  const nombre =
+    'VENTAS_20_R' +
+    String(
+      cierre.Ruta
+    ).replace(
+      /[^a-zA-Z0-9]/g,
+      ''
+    ) +
+    '_' +
+    String(
+      fechaKey
+    ).replace(
+      /-/g,
+      ''
+    ) +
+    '.pdf';
+
+
+  const pdf =
+    Utilities
+      .newBlob(
+        html,
+        MimeType.HTML,
+        nombre.replace(
+          '.pdf',
+          '.html'
+        )
+      )
+      .getAs(
+        MimeType.PDF
+      );
+
+
+  const archivo =
+    CR_reemplazarArchivo_(
+      carpeta,
+      nombre,
+      pdf
+    );
+
+
+  return {
+
+    nombre:
+      nombre,
+
+    ruta:
+      'Tickets Cierres Reparto/' +
+      nombre,
+
+    url:
+      archivo.getUrl()
+
+  };
+
+}
+
+
+function CR_crearReporteCargasHtml_(
+  carpeta,
+  fechaKey,
+  cierre,
+  cargas
+) {
+
+  const totales = {
+
+    Agua_Cargada:
+      0,
+
+    Agua_Venta_Reparto:
+      0,
+
+    Agua_Devuelta:
+      0,
+
+    SuperIce_Cargado:
+      0,
+
+    SuperIce_Venta_Reparto:
+      0,
+
+    SuperIce_Promo_Reparto:
+      0,
+
+    SuperIce_Devuelto:
+      0,
+
+    Venta_Dinero:
+      0,
+
+    Comision:
+      0
+
+  };
+
+
+  let filas = '';
+
+
+  cargas.forEach(
+    x => {
+
+      Object.keys(
+        totales
+      ).forEach(
+        k => {
+
+          totales[
+            k
+          ] +=
+            CR_num_(
+              x[
+                k
+              ]
+            );
+
+        }
+      );
+
+
+      filas +=
+        '<tr>' +
+          '<td>' +
+            CR_html_(
+              x.No_Carga
+            ) +
+          '</td>' +
+          '<td>' +
+            CR_html_(
+              x.Folio
+            ) +
+          '</td>' +
+          '<td class="n">' +
+            x.Agua_Cargada +
+          '</td>' +
+          '<td class="n">' +
+            x.Agua_Venta_Reparto +
+          '</td>' +
+          '<td class="n">' +
+            x.Agua_Devuelta +
+          '</td>' +
+          '<td class="n">' +
+            x.SuperIce_Cargado +
+          '</td>' +
+          '<td class="n">' +
+            x.SuperIce_Venta_Reparto +
+          '</td>' +
+          '<td class="n">' +
+            x.SuperIce_Promo_Reparto +
+          '</td>' +
+          '<td class="n">' +
+            x.SuperIce_Devuelto +
+          '</td>' +
+          '<td class="n">' +
+            CR_moneda_(
+              x.Venta_Dinero
+            ) +
+          '</td>' +
+          '<td class="n">' +
+            CR_moneda_(
+              x.Comision
+            ) +
+          '</td>' +
+        '</tr>';
+
+    }
+  );
+
+
+  if (
+    !filas
+  ) {
+
+    filas =
+      '<tr><td colspan="11" class="vacio">SIN CARGAS PARA ESTE CIERRE</td></tr>';
+
+  }
+
+
+  const html =
+    '<!doctype html><html><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>Detalle de cargas</title>' +
+    '<style>' +
+      'body{font-family:Arial,sans-serif;margin:24px;color:#172033;background:#f6f8fb}' +
+      '.card{background:#fff;border:1px solid #e3e7ee;border-radius:12px;padding:18px;max-width:1200px;margin:auto}' +
+      'h1{margin:0 0 4px;font-size:22px}' +
+      '.meta{color:#667085;margin-bottom:16px}' +
+      '.wrap{overflow:auto}' +
+      'table{width:100%;border-collapse:collapse;font-size:12px}' +
+      'th,td{padding:8px 7px;border-bottom:1px solid #e7ebf0;text-align:left;white-space:nowrap}' +
+      'th{background:#f8fafc;font-size:11px}' +
+      '.n{text-align:right}' +
+      'tfoot td{font-weight:700;background:#f8fafc}' +
+      '.vacio{text-align:center;padding:20px}' +
+    '</style></head><body>' +
+      '<div class="card">' +
+        '<h1>Detalle de cargas del día</h1>' +
+        '<div class="meta">Ruta ' +
+          CR_html_(
+            cierre.Ruta
+          ) +
+          ' · ' +
+          CR_html_(
+            fechaKey
+          ) +
+          ' · ' +
+          CR_html_(
+            cierre.id_vendedor
+          ) +
+        '</div>' +
+        '<div class="wrap"><table>' +
+          '<thead><tr>' +
+            '<th>Carga</th>' +
+            '<th>Folio</th>' +
+            '<th class="n">Agua cargada</th>' +
+            '<th class="n">Agua venta</th>' +
+            '<th class="n">Agua dev.</th>' +
+            '<th class="n">Ice cargado</th>' +
+            '<th class="n">Ice venta</th>' +
+            '<th class="n">Ice promo</th>' +
+            '<th class="n">Ice dev.</th>' +
+            '<th class="n">Venta $</th>' +
+            '<th class="n">Comisión</th>' +
+          '</tr></thead>' +
+          '<tbody>' +
+            filas +
+          '</tbody>' +
+          '<tfoot><tr>' +
+            '<td>TOTAL</td><td></td>' +
+            '<td class="n">' +
+              totales.Agua_Cargada +
+            '</td>' +
+            '<td class="n">' +
+              totales.Agua_Venta_Reparto +
+            '</td>' +
+            '<td class="n">' +
+              totales.Agua_Devuelta +
+            '</td>' +
+            '<td class="n">' +
+              totales.SuperIce_Cargado +
+            '</td>' +
+            '<td class="n">' +
+              totales.SuperIce_Venta_Reparto +
+            '</td>' +
+            '<td class="n">' +
+              totales.SuperIce_Promo_Reparto +
+            '</td>' +
+            '<td class="n">' +
+              totales.SuperIce_Devuelto +
+            '</td>' +
+            '<td class="n">' +
+              CR_moneda_(
+                totales.Venta_Dinero
+              ) +
+            '</td>' +
+            '<td class="n">' +
+              CR_moneda_(
+                totales.Comision
+              ) +
+            '</td>' +
+          '</tr></tfoot>' +
+        '</table></div>' +
+      '</div>' +
+    '</body></html>';
+
+
+  const nombre =
+    'REPORTE_CARGAS_R' +
+    String(
+      cierre.Ruta
+    ).replace(
+      /[^a-zA-Z0-9]/g,
+      ''
+    ) +
+    '_' +
+    String(
+      fechaKey
+    ).replace(
+      /-/g,
+      ''
+    ) +
+    '.html';
+
+
+  const blob =
+    Utilities.newBlob(
+      html,
+      MimeType.HTML,
+      nombre
+    );
+
+
+  const archivo =
+    CR_reemplazarArchivo_(
+      carpeta,
+      nombre,
+      blob
+    );
+
+
+  return {
+
+    nombre:
+      nombre,
+
+    url:
+      archivo.getUrl()
+
+  };
+
+}
+
+
+function CR_guardarExtrasEnCierre_(
+  fechaKey,
+  ruta,
+  vendedor,
+  ticket20,
+  reporteCargas
+) {
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+
+  const sh =
+    ss.getSheetByName(
+      CR_CFG.HOJA_CIERRES
+    );
+
+
+  if (
+    !sh
+  ) {
+
+    return;
+
+  }
+
+
+  const data =
+    sh.getDataRange()
+      .getValues();
+
+
+  const h =
+    CR_headers_(
+      data[0]
+    );
+
+
+  const cFecha =
+    CR_col_(
+      h,
+      'Fecha'
+    );
+
+
+  const cRuta =
+    CR_col_(
+      h,
+      'Ruta'
+    );
+
+
+  const cVendedor =
+    CR_col_(
+      h,
+      'id_vendedor'
+    );
+
+
+  const cTicket =
+    h[
+      CR_norm_(
+        'Ticket_20'
+      )
+    ];
+
+
+  const cReporte =
+    h[
+      CR_norm_(
+        'Reporte_Cargas'
+      )
+    ];
+
+
+  if (
+    cTicket ===
+      undefined &&
+    cReporte ===
+      undefined
+  ) {
+
+    return;
+
+  }
+
+
+  for (
+    let i = 1;
+    i < data.length;
+    i++
+  ) {
+
+    if (
+      CR_fechaKeySeguro_(
+        data[i][
+          cFecha
+        ]
+      ) !==
+        fechaKey ||
+      CR_txt_(
+        data[i][
+          cRuta
+        ]
+      ) !==
+        CR_txt_(
+          ruta
+        ) ||
+      CR_txt_(
+        data[i][
+          cVendedor
+        ]
+      ).toLowerCase() !==
+        CR_txt_(
+          vendedor
+        ).toLowerCase()
+    ) {
+
+      continue;
+
+    }
+
+
+    if (
+      cTicket !==
+      undefined
+    ) {
+
+      sh.getRange(
+        i + 1,
+        cTicket + 1
+      ).setValue(
+        ticket20
+      );
+
+    }
+
+
+    if (
+      cReporte !==
+      undefined
+    ) {
+
+      sh.getRange(
+        i + 1,
+        cReporte + 1
+      ).setValue(
+        reporteCargas
+      );
+
+    }
+
+
+    break;
+
+  }
+
+}
+
+
+function CR_html_(
+  valor
+) {
+
+  return String(
+    valor ??
+    ''
+  )
+    .replace(
+      /&/g,
+      '&amp;'
+    )
+    .replace(
+      /</g,
+      '&lt;'
+    )
+    .replace(
+      />/g,
+      '&gt;'
+    )
+    .replace(
+      /"/g,
+      '&quot;'
+    )
+    .replace(
+      /'/g,
+      '&#39;'
+    );
 
 }
 
