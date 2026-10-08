@@ -385,7 +385,8 @@ function CIERRES_REPARTO_generarCierreVendedor(
     const extras =
       CR_generarExtrasCierre_(
         fechaKey,
-        cierre
+        cierre,
+        resultado.id_cierre
       );
 
     resultado.Ticket_20 =
@@ -3207,7 +3208,8 @@ function CR_validarCierres_(
 
 function CR_generarExtrasCierre_(
   fechaKey,
-  cierre
+  cierre,
+  idCierre
 ) {
 
   const ventas20 =
@@ -3237,13 +3239,12 @@ function CR_generarExtrasCierre_(
     );
 
 
-  const reporteCargas =
-    CR_crearReporteCargasHtml_(
-      carpeta,
-      fechaKey,
-      cierre,
-      cargas
-    );
+  const reporteCargas = {
+    url:
+      CR_urlReporteCargas_(
+        idCierre
+      )
+  };
 
 
   CR_guardarExtrasEnCierre_(
@@ -4246,47 +4247,219 @@ function CR_crearTicket20Pdf_(
 }
 
 
-function CR_crearReporteCargasHtml_(
-  carpeta,
+function CR_urlReporteCargas_(
+  idCierre
+) {
+
+  const base =
+    ScriptApp
+      .getService()
+      .getUrl();
+
+  if (
+    !base ||
+    !idCierre
+  ) {
+
+    return '';
+
+  }
+
+  return base +
+    '?reporte=cargas&id_cierre=' +
+    encodeURIComponent(
+      idCierre
+    );
+
+}
+
+
+function CIERRES_REPARTO_renderReporteCargasWeb(
+  idCierre
+) {
+
+  const id =
+    CR_txt_(
+      idCierre
+    );
+
+  if (
+    !id
+  ) {
+
+    return HtmlService
+      .createHtmlOutput(
+        '<h2>Falta id_cierre.</h2>'
+      )
+      .setTitle(
+        'Reporte de cargas'
+      );
+
+  }
+
+  const ss =
+    SpreadsheetApp
+      .getActiveSpreadsheet();
+
+  const sh =
+    ss.getSheetByName(
+      CR_CFG.HOJA_CIERRES
+    );
+
+  if (
+    !sh
+  ) {
+
+    return HtmlService
+      .createHtmlOutput(
+        '<h2>No existe CIERRES_REPARTO.</h2>'
+      )
+      .setTitle(
+        'Reporte de cargas'
+      );
+
+  }
+
+  const data =
+    sh.getDataRange()
+      .getValues();
+
+  const h =
+    CR_headers_(
+      data[0]
+    );
+
+  const cId =
+    CR_col_(
+      h,
+      'id_cierre'
+    );
+
+  const cFecha =
+    CR_col_(
+      h,
+      'Fecha'
+    );
+
+  const cRuta =
+    CR_col_(
+      h,
+      'Ruta'
+    );
+
+  const cVendedor =
+    CR_col_(
+      h,
+      'id_vendedor'
+    );
+
+  let cierre =
+    null;
+
+  for (
+    let i = 1;
+    i < data.length;
+    i++
+  ) {
+
+    if (
+      CR_txt_(
+        data[i][
+          cId
+        ]
+      ) ===
+      id
+    ) {
+
+      cierre = {
+        id_cierre:
+          id,
+        Fecha:
+          data[i][
+            cFecha
+          ],
+        Ruta:
+          data[i][
+            cRuta
+          ],
+        id_vendedor:
+          data[i][
+            cVendedor
+          ]
+      };
+
+      break;
+
+    }
+
+  }
+
+  if (
+    !cierre
+  ) {
+
+    return HtmlService
+      .createHtmlOutput(
+        '<h2>No encontré el cierre solicitado.</h2>'
+      )
+      .setTitle(
+        'Reporte de cargas'
+      );
+
+  }
+
+  const fechaKey =
+    CR_fechaKeySeguro_(
+      cierre.Fecha
+    );
+
+  const cargas =
+    CR_leerDetalleCargasConSubtotales_(
+      fechaKey,
+      cierre.id_vendedor
+    );
+
+  const html =
+    CR_construirReporteCargasHtml_(
+      fechaKey,
+      cierre,
+      cargas
+    );
+
+  return HtmlService
+    .createHtmlOutput(
+      html
+    )
+    .setTitle(
+      'Cierre Ruta ' +
+      cierre.Ruta
+    )
+    .setXFrameOptionsMode(
+      HtmlService.XFrameOptionsMode.ALLOWALL
+    );
+
+}
+
+
+function CR_construirReporteCargasHtml_(
   fechaKey,
   cierre,
   cargas
 ) {
 
   const totales = {
-
-    Agua_Cargada:
-      0,
-
-    Agua_Venta_Reparto:
-      0,
-
-    Agua_Devuelta:
-      0,
-
-    SuperIce_Cargado:
-      0,
-
-    SuperIce_Venta_Reparto:
-      0,
-
-    SuperIce_Promo_Reparto:
-      0,
-
-    SuperIce_Devuelto:
-      0,
-
-    Venta_Dinero:
-      0,
-
-    Comision:
-      0
-
+    Agua_Cargada: 0,
+    Agua_Venta_Reparto: 0,
+    Agua_Devuelta: 0,
+    SuperIce_Cargado: 0,
+    SuperIce_Venta_Reparto: 0,
+    SuperIce_Promo_Reparto: 0,
+    SuperIce_Devuelto: 0,
+    Venta_Dinero: 0,
+    Comision: 0
   };
 
-
-  let filas = '';
-
+  let tarjetas = '';
 
   cargas.forEach(
     x => {
@@ -4295,210 +4468,82 @@ function CR_crearReporteCargasHtml_(
         totales
       ).forEach(
         k => {
-
-          totales[
-            k
-          ] +=
+          totales[k] +=
             CR_num_(
-              x[
-                k
-              ]
+              x[k]
             );
-
         }
       );
 
-
-      filas +=
-        '<tr>' +
-          '<td>' +
-            CR_html_(
-              x.No_Carga
-            ) +
-          '</td>' +
-          '<td>' +
-            CR_html_(
-              x.Folio
-            ) +
-          '</td>' +
-          '<td class="n">' +
-            x.Agua_Cargada +
-          '</td>' +
-          '<td class="n">' +
-            x.Agua_Venta_Reparto +
-          '</td>' +
-          '<td class="n">' +
-            x.Agua_Devuelta +
-          '</td>' +
-          '<td class="n">' +
-            x.SuperIce_Cargado +
-          '</td>' +
-          '<td class="n">' +
-            x.SuperIce_Venta_Reparto +
-          '</td>' +
-          '<td class="n">' +
-            x.SuperIce_Promo_Reparto +
-          '</td>' +
-          '<td class="n">' +
-            x.SuperIce_Devuelto +
-          '</td>' +
-          '<td class="n">' +
-            CR_moneda_(
-              x.Venta_Dinero
-            ) +
-          '</td>' +
-          '<td class="n">' +
-            CR_moneda_(
-              x.Comision
-            ) +
-          '</td>' +
-        '</tr>';
+      tarjetas +=
+        '<section class="carga">' +
+          '<div class="carga-head">' +
+            '<div><b>Carga ' +
+              CR_html_(x.No_Carga) +
+            '</b><span>Folio ' +
+              CR_html_(x.Folio) +
+            '</span></div>' +
+            '<div class="venta">' +
+              CR_moneda_(x.Venta_Dinero) +
+            '</div>' +
+          '</div>' +
+          '<div class="grid">' +
+            '<div><span>Agua cargada</span><b>' + x.Agua_Cargada + '</b></div>' +
+            '<div><span>Agua vendida</span><b>' + x.Agua_Venta_Reparto + '</b></div>' +
+            '<div><span>Agua devuelta</span><b>' + x.Agua_Devuelta + '</b></div>' +
+            '<div><span>Ice cargado</span><b>' + x.SuperIce_Cargado + '</b></div>' +
+            '<div><span>Ice vendido</span><b>' + x.SuperIce_Venta_Reparto + '</b></div>' +
+            '<div><span>Ice promo</span><b>' + x.SuperIce_Promo_Reparto + '</b></div>' +
+            '<div><span>Ice devuelto</span><b>' + x.SuperIce_Devuelto + '</b></div>' +
+            '<div><span>Comisión</span><b>' + CR_moneda_(x.Comision) + '</b></div>' +
+          '</div>' +
+        '</section>';
 
     }
   );
 
-
   if (
-    !filas
+    !tarjetas
   ) {
-
-    filas =
-      '<tr><td colspan="11" class="vacio">SIN CARGAS PARA ESTE CIERRE</td></tr>';
-
+    tarjetas =
+      '<div class="empty">No hay cargas para este cierre.</div>';
   }
 
-
-  const html =
-    '<!doctype html><html><head><meta charset="utf-8">' +
+  return '<!doctype html><html><head>' +
+    '<meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-    '<title>Detalle de cargas</title>' +
     '<style>' +
-      'body{font-family:Arial,sans-serif;margin:24px;color:#172033;background:#f6f8fb}' +
-      '.card{background:#fff;border:1px solid #e3e7ee;border-radius:12px;padding:18px;max-width:1200px;margin:auto}' +
-      'h1{margin:0 0 4px;font-size:22px}' +
-      '.meta{color:#667085;margin-bottom:16px}' +
-      '.wrap{overflow:auto}' +
-      'table{width:100%;border-collapse:collapse;font-size:12px}' +
-      'th,td{padding:8px 7px;border-bottom:1px solid #e7ebf0;text-align:left;white-space:nowrap}' +
-      'th{background:#f8fafc;font-size:11px}' +
-      '.n{text-align:right}' +
-      'tfoot td{font-weight:700;background:#f8fafc}' +
-      '.vacio{text-align:center;padding:20px}' +
-    '</style></head><body>' +
-      '<div class="card">' +
-        '<h1>Detalle de cargas del día</h1>' +
-        '<div class="meta">Ruta ' +
-          CR_html_(
-            cierre.Ruta
-          ) +
-          ' · ' +
-          CR_html_(
-            fechaKey
-          ) +
-          ' · ' +
-          CR_html_(
-            cierre.id_vendedor
-          ) +
-        '</div>' +
-        '<div class="wrap"><table>' +
-          '<thead><tr>' +
-            '<th>Carga</th>' +
-            '<th>Folio</th>' +
-            '<th class="n">Agua cargada</th>' +
-            '<th class="n">Agua venta</th>' +
-            '<th class="n">Agua dev.</th>' +
-            '<th class="n">Ice cargado</th>' +
-            '<th class="n">Ice venta</th>' +
-            '<th class="n">Ice promo</th>' +
-            '<th class="n">Ice dev.</th>' +
-            '<th class="n">Venta $</th>' +
-            '<th class="n">Comisión</th>' +
-          '</tr></thead>' +
-          '<tbody>' +
-            filas +
-          '</tbody>' +
-          '<tfoot><tr>' +
-            '<td>TOTAL</td><td></td>' +
-            '<td class="n">' +
-              totales.Agua_Cargada +
-            '</td>' +
-            '<td class="n">' +
-              totales.Agua_Venta_Reparto +
-            '</td>' +
-            '<td class="n">' +
-              totales.Agua_Devuelta +
-            '</td>' +
-            '<td class="n">' +
-              totales.SuperIce_Cargado +
-            '</td>' +
-            '<td class="n">' +
-              totales.SuperIce_Venta_Reparto +
-            '</td>' +
-            '<td class="n">' +
-              totales.SuperIce_Promo_Reparto +
-            '</td>' +
-            '<td class="n">' +
-              totales.SuperIce_Devuelto +
-            '</td>' +
-            '<td class="n">' +
-              CR_moneda_(
-                totales.Venta_Dinero
-              ) +
-            '</td>' +
-            '<td class="n">' +
-              CR_moneda_(
-                totales.Comision
-              ) +
-            '</td>' +
-          '</tr></tfoot>' +
-        '</table></div>' +
-      '</div>' +
-    '</body></html>';
-
-
-  const nombre =
-    'REPORTE_CARGAS_R' +
-    String(
-      cierre.Ruta
-    ).replace(
-      /[^a-zA-Z0-9]/g,
-      ''
-    ) +
-    '_' +
-    String(
-      fechaKey
-    ).replace(
-      /-/g,
-      ''
-    ) +
-    '.html';
-
-
-  const blob =
-    Utilities.newBlob(
-      html,
-      MimeType.HTML,
-      nombre
-    );
-
-
-  const archivo =
-    CR_reemplazarArchivo_(
-      carpeta,
-      nombre,
-      blob
-    );
-
-
-  return {
-
-    nombre:
-      nombre,
-
-    url:
-      archivo.getUrl()
-
-  };
+      '*{box-sizing:border-box}' +
+      'body{margin:0;background:#f4f6fa;color:#142033;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}' +
+      '.wrap{max-width:900px;margin:auto;padding:18px}' +
+      '.hero{background:#111827;color:white;border-radius:16px;padding:20px;margin-bottom:14px}' +
+      '.hero h1{font-size:22px;margin:0 0 5px}.hero p{margin:0;color:#cbd5e1;font-size:12px}' +
+      '.carga{background:white;border:1px solid #e5e9f0;border-radius:14px;padding:16px;margin-bottom:12px}' +
+      '.carga-head{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #edf0f4;padding-bottom:11px;margin-bottom:12px}' +
+      '.carga-head b{font-size:17px}.carga-head span{display:block;color:#758096;font-size:10px;margin-top:3px}' +
+      '.venta{font-size:18px;font-weight:800}' +
+      '.grid{display:grid;grid-template-columns:repeat(4,minmax(110px,1fr));gap:9px}' +
+      '.grid div{background:#f8fafc;border-radius:9px;padding:9px}.grid span{display:block;color:#758096;font-size:9px;margin-bottom:3px}.grid b{font-size:14px}' +
+      '.total{background:white;border:2px solid #111827;border-radius:14px;padding:16px;margin-top:16px}' +
+      '.total h2{margin:0 0 12px;font-size:17px}.total-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}' +
+      '.total-grid span{display:block;color:#758096;font-size:9px}.total-grid b{font-size:18px}' +
+      '.empty{background:white;border-radius:14px;padding:28px;text-align:center;color:#758096}' +
+      '@media(max-width:650px){.grid{grid-template-columns:repeat(2,1fr)}.total-grid{grid-template-columns:1fr 1fr}.wrap{padding:10px}.hero{border-radius:12px}}' +
+    '</style></head><body><main class="wrap">' +
+      '<section class="hero">' +
+        '<h1>Reporte de cierre · Ruta ' + CR_html_(cierre.Ruta) + '</h1>' +
+        '<p>' + CR_html_(fechaKey) + ' · ' + CR_html_(cierre.id_vendedor) + '</p>' +
+      '</section>' +
+      tarjetas +
+      '<section class="total"><h2>Total del día</h2><div class="total-grid">' +
+        '<div><span>Agua cargada</span><b>' + totales.Agua_Cargada + '</b></div>' +
+        '<div><span>Agua vendida</span><b>' + totales.Agua_Venta_Reparto + '</b></div>' +
+        '<div><span>Agua devuelta</span><b>' + totales.Agua_Devuelta + '</b></div>' +
+        '<div><span>Ice vendido</span><b>' + totales.SuperIce_Venta_Reparto + '</b></div>' +
+        '<div><span>Venta total</span><b>' + CR_moneda_(totales.Venta_Dinero) + '</b></div>' +
+        '<div><span>Comisión total</span><b>' + CR_moneda_(totales.Comision) + '</b></div>' +
+      '</div></section>' +
+    '</main></body></html>';
 
 }
 
