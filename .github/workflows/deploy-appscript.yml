@@ -45,22 +45,11 @@ jobs:
           printf '{"scriptId":"%s","rootDir":"."}\n' "$APPS_SCRIPT_ID" > .clasp.json
           clasp versions
 
-          echo "=== SEARCH VERSIONS 110..129 ==="
-          for v in $(seq 110 129); do
-            rm -f ./*.js ./*.html ./appsscript.json
-            out=$(clasp pull --versionNumber "$v" 2>&1)
-            status=$?
-            if [ $status -ne 0 ]; then
-              continue
-            fi
-            if grep -RniE "Cierre detallado|Consolidado final por precio|precios tomados de GIROS|Imprimir detalle" . --include='*.js' --include='*.html' >/tmp/matches.txt 2>/dev/null; then
-              echo "=== MATCH VERSION $v ==="
-              cat /tmp/matches.txt
-              for f in $(cut -d: -f1 /tmp/matches.txt | sort -u); do
-                echo "--- FILE $f (version $v) ---"
-                grep -n -C 40 -E "Cierre detallado|Consolidado final por precio|precios tomados de GIROS|Imprimir detalle" "$f" || true
-              done
-            fi
-          done
-
+          echo "=== PULL VERSION 151 ==="
+          rm -f ./*.js ./*.html ./appsscript.json
+          clasp pull --versionNumber 151
+          echo "=== FILES VERSION 151 ==="
+          ls -lah
+          echo "=== BROAD CIERRE SEARCH VERSION 151 ==="
+          grep -RniE "cierre|folios del d[ií]a|comisi[oó]n mostrada|ARIS BOLSA|venta total|GPS OK" . --include='*.js' --include='*.html' || true
           echo "=== DIAGNOSTIC COMPLETE - NO PUSH PERFORMED ==="
