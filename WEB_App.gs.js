@@ -7,7 +7,7 @@
 // NO interfiere con doPost() ni con Telegram / Make.
 // ============================================================
 
-const WEB_VERSION = '0.2.1';
+const WEB_VERSION = '0.2.2';
 
 
 /**
@@ -21,6 +21,27 @@ const WEB_VERSION = '0.2.1';
  * esquina superior derecha del reporte.
  */
 function doGet(e) {
+
+  const params =
+    e && e.parameter
+      ? e.parameter
+      : {};
+
+
+  if (
+    String(
+      params.reporte ||
+      ''
+    ).toLowerCase() ===
+    'cargas'
+  ) {
+
+    return CIERRES_REPARTO_renderReporteCargasWeb(
+      params.id_cierre ||
+      ''
+    );
+
+  }
 
   const index =
     HtmlService
