@@ -45,8 +45,8 @@ jobs:
           printf '{"scriptId":"%s","rootDir":"."}\n' "$APPS_SCRIPT_ID" > .clasp.json
           clasp versions
 
-          echo "=== SEARCH VERSIONS 130..160 ==="
-          for v in $(seq 130 160); do
+          echo "=== SEARCH VERSIONS 110..129 ==="
+          for v in $(seq 110 129); do
             rm -f ./*.js ./*.html ./appsscript.json
             out=$(clasp pull --versionNumber "$v" 2>&1)
             status=$?
