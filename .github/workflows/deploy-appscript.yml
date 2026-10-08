@@ -126,10 +126,11 @@ jobs:
           print('Reparto central listo: Telegram legacy desactivado; watchdogs preservados')
           PY
 
-      - name: Integrate dynamic cierre report route
+      - name: Restore existing cierre link and locate detailed report generator
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           candidates = [
               Path('/tmp/reparto-remote/WEB_App.gs.js'),
@@ -141,16 +142,66 @@ jobs:
               raise SystemExit('WEB_App file not found in pulled Apps Script project')
 
           text = path.read_text(encoding='utf-8')
-          marker = 'CIERRES_REPARTO_renderReporteCargasWeb'
-          if marker not in text:
-              old = 'function doGet(e) {\n'
-              new = '''function doGet(e) {\n\n  const params =\n    e && e.parameter\n      ? e.parameter\n      : {};\n\n\n  if (\n    String(\n      params.reporte ||\n      ''\n    ).toLowerCase() ===\n    'cargas'\n  ) {\n\n    return CIERRES_REPARTO_renderReporteCargasWeb(\n      params.id_cierre ||\n      ''\n    );\n\n  }\n'''
-              if old not in text:
-                  raise SystemExit('Could not find doGet(e) in WEB_App')
-              text = text.replace(old, new, 1)
+
+          # IMPORTANT: ?cierre= belongs to the pre-existing detailed report.
+          # Our new route must only answer ?reporte=cargas.
+          text = text.replace(
+              """  if (
+    String(
+      params.reporte ||
+      ''
+    ).toLowerCase() ===
+      'cargas' ||
+    params.cierre
+  ) {
+
+    return CIERRES_REPARTO_renderReporteCargasWeb(
+      params.id_cierre ||
+      params.cierre ||
+      ''
+    );
+
+  }""",
+              """  if (
+    String(
+      params.reporte ||
+      ''
+    ).toLowerCase() ===
+    'cargas'
+  ) {
+
+    return CIERRES_REPARTO_renderReporteCargasWeb(
+      params.id_cierre ||
+      ''
+    );
+
+  }"""
+          )
 
           path.write_text(text, encoding='utf-8')
-          print(f'Ruta dinámica de cierre integrada en {path.name}')
+          print(f'Ruta ?cierre restaurada para el reporte existente en {path.name}')
+
+          print('=== UBICACION GENERADOR CIERRE DETALLADO ===')
+          for p in Path('/tmp/reparto-remote').glob('*'):
+              if not p.is_file():
+                  continue
+              try:
+                  t = p.read_text(encoding='utf-8')
+              except Exception:
+                  continue
+              if ('Cierre detallado' in t or
+                  'Consolidado final por precio' in t or
+                  'precios tomados de GIROS' in t):
+                  print(f'FILE={p.name}')
+                  lines = t.splitlines()
+                  for i, line in enumerate(lines, 1):
+                      if ('Cierre detallado' in line or
+                          'Consolidado final por precio' in line or
+                          'precios tomados de GIROS' in line):
+                          lo=max(1,i-35); hi=min(len(lines),i+120)
+                          print(f'--- {p.name}:{lo}-{hi} ---')
+                          for n in range(lo,hi+1):
+                              print(f'{n:05d}: {lines[n-1]}')
           PY
 
       - name: Validate critical modules before push
