@@ -27,4 +27,18 @@ jobs:
           printf '%s' "$CLASP_CREDENTIALS" > "$HOME/.clasprc.json"
           printf '{"scriptId":"%s","rootDir":"."}\n' "$APPS_SCRIPT_ID" > .clasp.json
       - name: Ejecutar SOLO CN26_PROBAR_CREDENCIALES (GET; sin envíos)
-        run: clasp run CN26_PROBAR_CREDENCIALES
+        shell: bash
+        run: |
+          set +e
+          RESULTADO="$(clasp run CN26_PROBAR_CREDENCIALES 2>&1)"
+          EXIT_CODE=$?
+          set -e
+          printf '%s\n' "$RESULTADO"
+          if [ "$EXIT_CODE" -ne 0 ] || printf '%s' "$RESULTADO" | grep -Eqi 'Exception|NOT_FOUND|error.*code'; then
+            echo "La prueba NO se completó correctamente (error remoto)."
+            exit 1
+          fi
+          if ! printf '%s' "$RESULTADO" | grep -Eq 'ok[^a-zA-Z]{0,12}true'; then
+            echo "No existe una confirmación verificable de ok=true."
+            exit 1
+          fi
