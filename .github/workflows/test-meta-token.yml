@@ -1,0 +1,30 @@
+name: Prueba de token Meta (sin enviar WhatsApp)
+
+on:
+  push:
+    paths:
+      - .github/workflows/test-meta-token.yml
+  workflow_dispatch:
+
+jobs:
+  credenciales:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Instalar clasp
+        run: npm install -g @google/clasp
+      - name: Configurar credenciales privadas y proyecto
+        env:
+          CLASP_CREDENTIALS: ${{ secrets.CLASP_CREDENTIALS }}
+          APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+        run: |
+          test -n "$CLASP_CREDENTIALS" || (echo "Falta CLASP_CREDENTIALS" && exit 1)
+          test -n "$APPS_SCRIPT_ID" || (echo "Falta APPS_SCRIPT_ID" && exit 1)
+          printf '%s' "$CLASP_CREDENTIALS" > "$HOME/.clasprc.json"
+          printf '{"scriptId":"%s","rootDir":"."}\n' "$APPS_SCRIPT_ID" > .clasp.json
+      - name: Ejecutar SOLO CN26_PROBAR_CREDENCIALES (GET; sin envíos)
+        run: clasp run CN26_PROBAR_CREDENCIALES
