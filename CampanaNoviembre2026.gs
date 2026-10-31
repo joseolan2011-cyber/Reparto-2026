@@ -219,8 +219,16 @@ function CN26_ENVIAR_LOTE() {
       if(pausaLimite)break;
       Utilities.sleep(CN26.MIN_INTERVALO_MS);
     }
+    // Cuando ya no hay pendientes, quita solamente el trigger de esta campaña.
+    const pendientes=sh.getRange(2,10,total-1,1).getDisplayValues()
+      .filter(c=>c[0]==='PENDIENTE').length;
+    if(pendientes===0){
+      ScriptApp.getProjectTriggers().forEach(t=>{
+        if(t.getHandlerFunction()==='CN26_ENVIAR_LOTE')ScriptApp.deleteTrigger(t);
+      });
+    }
     return {procesados:realizados,aceptados:aceptados,
-      rechazos:fallidos,pausaLimite:pausaLimite};
+      rechazos:fallidos,pausaLimite:pausaLimite,pendientes:pendientes};
   }finally{lock.releaseLock();}
 }
 
