@@ -84,6 +84,14 @@ jobs:
             cat "$GITHUB_WORKSPACE/CIERRES_REPARTO.js"
           } > /tmp/reparto-remote/CIERRES_REPARTO.js
 
+      - name: Overlay isolated November campaign module (disabled by default)
+        run: |
+          test -f "$GITHUB_WORKSPACE/CampanaNoviembre2026.gs" || (echo "November campaign file missing" && exit 1)
+          rm -f /tmp/reparto-remote/CampanaNoviembre2026.gs /tmp/reparto-remote/CampanaNoviembre2026.js
+          cp "$GITHUB_WORKSPACE/CampanaNoviembre2026.gs" /tmp/reparto-remote/CampanaNoviembre2026.js
+          grep -q "function CN26_PROBAR_CREDENCIALES" /tmp/reparto-remote/CampanaNoviembre2026.js
+          grep -q "CAMPANA_NOVIEMBRE_PERMITIR_MASIVO" /tmp/reparto-remote/CampanaNoviembre2026.js
+
       - name: Integrate watchdogs and disable legacy Telegram monitor
         run: |
           python3 - <<'PY'
