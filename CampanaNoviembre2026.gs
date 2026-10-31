@@ -186,6 +186,7 @@ function CN26_ENVIAR_LOTE() {
     const start=Date.now();
     for(let i=0;i<data.length;i++){
       if(realizados>=CN26.LOTE || Date.now()-start>CN26.MAX_EJECUCION_MS)break;
+      if(props.getProperty('CAMPANA_NOVIEMBRE_PAUSADA')==='SI')break;
       const r=data[i];
       if(r[9]!=='PENDIENTE')continue;
       const row=i+2;
@@ -226,6 +227,7 @@ function CN26_ENVIAR_LOTE() {
     const pendientes=sh.getRange(2,10,total-1,1).getDisplayValues()
       .filter(c=>c[0]==='PENDIENTE').length;
     if(pendientes===0){
+      props.setProperty('CAMPANA_NOVIEMBRE_FIN',new Date().toISOString());
       ScriptApp.getProjectTriggers().forEach(t=>{
         if(t.getHandlerFunction()==='CN26_ENVIAR_LOTE')ScriptApp.deleteTrigger(t);
       });
@@ -233,6 +235,49 @@ function CN26_ENVIAR_LOTE() {
     return {procesados:realizados,aceptados:aceptados,
       rechazos:fallidos,pausaLimite:pausaLimite,pendientes:pendientes};
   }finally{lock.releaseLock();}
+}
+
+/**
+ * INICIO CON UN SOLO CLIC, únicamente para la audiencia verificada de 907.
+ * La ejecución de esta función significa que el operador AUTORIZÓ el envío.
+ * Comprueba todos los 907 pendientes, sin duplicados ni registros inválidos,
+ * y programa el activador exclusivo de esta campaña.
+ *
+ * No es automático al desplegar desde GitHub.
+ */
+function CN26_INICIAR_DESPLIEGUE() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('CAMPANA_NOVIEMBRE_PAUSADA') === 'SI')
+    throw new Error('La campaña está pausada: no se inició.');
+  if (Utilities.formatDate(new Date(), CN26.TZ, 'yyyy-MM-dd') !== '2026-10-31')
+    throw new Error('No iniciar fuera del 31 de octubre sin revisar el silencio de Telegram en Make.');
+  CN26_config_(); // Confirma token disponible, sin mostrar credenciales.
+  const sh = SpreadsheetApp.openById(CN26.REPARTO_ID).getSheetByName(CN26.ENVIOS);
+  if (!sh) throw new Error('Falta la hoja CAMPANA_NOVIEMBRE_2026.');
+  const total = sh.getLastRow() - 1;
+  if (total !== 907) throw new Error('Audiencia cambió: esperados 907, encontrados ' + total);
+  const data = sh.getRange(2,1,total,CN26.COLUMNAS.length).getDisplayValues();
+  const vistos = new Set();
+  const diasValidos = new Set(['Lunes y Jueves','Martes y Viernes','Miércoles y Sábado']);
+  let yaProcesados = 0;
+  data.forEach((r,i) => {
+    const tel = CN26_telefono_(r[0]);
+    if (!tel || vistos.has(tel) || !diasValidos.has(r[2]) || !CN26_si_(r[4]))
+      throw new Error('Fila inválida o duplicada: ' + (i+2));
+    vistos.add(tel);
+    if (r[9] !== 'PENDIENTE') yaProcesados++;
+  });
+  if (yaProcesados > 0 && !props.getProperty('CAMPANA_NOVIEMBRE_INICIO'))
+    throw new Error('Hay registros procesados sin fecha de inicio. Requiere revisión manual.');
+  props.setProperty('CAMPANA_NOVIEMBRE_PERMITIR_MASIVO', 'ENVIAR_2026');
+  if (!props.getProperty('CAMPANA_NOVIEMBRE_INICIO'))
+    props.setProperty('CAMPANA_NOVIEMBRE_INICIO', new Date().toISOString());
+  const programado = CN26_PROGRAMAR_LOTES();
+  const salida = {ok:true,audiencia:total,pendientes:total-yaProcesados,
+    maxPorMinuto:CN26.LOTE,inicio:props.getProperty('CAMPANA_NOVIEMBRE_INICIO'),
+    trigger:programado};
+  console.log('CN26_DESPLIEGUE_INICIADO ' + JSON.stringify(salida));
+  return salida;
 }
 
 /** Solo instala un trigger si YA existe autorización de envío. */
