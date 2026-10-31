@@ -124,7 +124,7 @@ function CN26_PREPARAR_AUDIENCIA() {
     for(let i=1;i<origen.length;i++){
       const r=origen[i],raw=r[ix.telefono];
       if(!raw)continue;
-      const dias=String(r[ix.Dia_Visita]||'').trim();
+      const dias=CN26_formatearDias_(r[ix.Dia_Visita]);
       const tel=CN26_telefono_(raw);
       if(!dias){descartes.sinDia++;continue;}
       if(CN26_si_(r[ix['ES PUBLICO GRAL']])){descartes.publico++;continue;}
@@ -275,6 +275,12 @@ function CN26_indices_(headers,required){
   });
   return o;
 }
+function CN26_formatearDias_(v){
+  const texto=String(v||'').trim();
+  if(!texto)return '';
+  const partes=texto.split(/\s*,\s*|\s+y\s+/i).map(x=>x.trim()).filter(Boolean);
+  return partes.length===2?partes.join(' y '):texto;
+}
 function CN26_telefono_(v){
   const clean=String(v||'').replace(/\D/g,'');
   const tel=clean.slice(-10);
@@ -307,7 +313,7 @@ function CN26_enviar_(cfg,tel,dias){
     template:{name:cfg.plantilla,language:{code:cfg.idioma},
       components:[
         {type:'header',parameters:[{type:'video',video:{id:cfg.video}}]},
-        {type:'body',parameters:[{type:'text',text:String(dias)}]}
+        {type:'body',parameters:[{type:'text',text:CN26_formatearDias_(dias)}]}
       ]
     }
   };
