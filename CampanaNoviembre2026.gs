@@ -79,13 +79,15 @@ function CN26_PROBAR_CREDENCIALES() {
   );
   const status=respuesta.getResponseCode();
   const body=CN26_json_(respuesta.getContentText());
-  return {
+  const comprobacion = {
     ok:status>=200 && status<300,
     http:status,
     id:body.id || '',
     numero:body.display_phone_number || '',
     error:body.error ? {code:body.error.code,message:body.error.message} : null
   };
+  console.log('CN26_CREDENCIALES ' + JSON.stringify(comprobacion));
+  return comprobacion;
 }
 
 /** ÚNICOS DOS números permitidos para la prueba. Envía dos plantillas. */
@@ -96,6 +98,7 @@ function CN26_PROBAR_VIDEO_EN_DOS_TELEFONOS() {
     const r=CN26_enviar_(cfg,tel,'Lunes y Jueves');
     resultados.push({telefono:tel,ok:r.ok,http:r.http,
       wamid:r.wamid,errorCodigo:r.errorCodigo,detalle:r.detalle});
+    console.log('CN26_PRUEBA_VIDEO ' + JSON.stringify(resultados[resultados.length - 1]));
     Utilities.sleep(CN26.MIN_INTERVALO_MS);
   }
   return resultados;
