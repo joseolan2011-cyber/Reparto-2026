@@ -1147,6 +1147,15 @@ function MONITOREO_CENTRAL_cadaMinuto() {
   const inicio =
     Date.now();
 
+  // Vigilar Make independientemente del resultado del monitoreo de cargas.
+  try {
+    const resultadoMake = monitorMakeEscenarios(false);
+    console.log('MONITOR CENTRAL - Make: ' + JSON.stringify(resultadoMake));
+  } catch (error) {
+    console.error('MONITOR CENTRAL - Make: ' + (error.stack || error));
+  }
+
+
 
   try {
 
