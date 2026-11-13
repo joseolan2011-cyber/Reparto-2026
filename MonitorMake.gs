@@ -24,7 +24,9 @@
 
 const MONITOR_MAKE_CONFIG = {
   DEFAULT_API_BASE: 'https://us2.make.com/api/v2',
-  DEFAULT_INTERVAL_MIN: 5,
+  DEFAULT_INTERVAL_MIN: 1,
+  CRITICAL_ID: '6462572',
+  PROP_ALERTA_CRITICA: 'MAKE_CRITICAL_ALERT_LAST_MS',
   PROP_ULTIMO_CHECK: 'MAKE_MONITOR_ULTIMO_CHECK_MS',
   PROP_ESTADO: 'MAKE_MONITOR_ESTADO_V1',
   PAGE_LIMIT: 100,
@@ -66,6 +68,17 @@ function monitorMakeEscenarios(forzar) {
   const recuperados = [];
 
   escenarios.forEach(s => {
+    if (String(s.id) === MONITOR_MAKE_CONFIG.CRITICAL_ID && (s.isPaused === true || s.isActive === false)) {
+      const resultado = monitorMakeRecuperarCritico_(apiBase, token, s);
+      s.isActive = resultado.activo;
+      s.isPaused = resultado.pausado;
+      if (!resultado.activo || resultado.pausado) {
+        monitorMakeAlertaCritica_(props, s, resultado.detalle);
+      } else {
+        monitorMakeEnviarRecuperados_([{id:s.id,name:s.name}]);
+        props.deleteProperty(MONITOR_MAKE_CONFIG.PROP_ALERTA_CRITICA);
+      }
+    }
     const id = String(s.id);
     const problema = s.isPaused === true || s.isActive === false;
     const razon = s.isPaused === true ? 'PAUSADO' : (s.isActive === false ? 'INACTIVO' : 'ACTIVO');
@@ -242,4 +255,75 @@ function reiniciarEstadoMonitorMake() {
   props.deleteProperty(MONITOR_MAKE_CONFIG.PROP_ESTADO);
   props.deleteProperty(MONITOR_MAKE_CONFIG.PROP_ULTIMO_CHECK);
   console.log('Estado del monitor Make reiniciado.');
+}
+
+
+/**
+ * Protección independiente del escenario crítico de entrada WhatsApp.
+ * La activación se confirma mediante una segunda lectura de la API.
+ */
+function monitorMakeRecuperarCritico_(apiBase, token, escenario) {
+  let detalle = '';
+  try {
+    const url = apiBase + '/scenarios/' + encodeURIComponent(escenario.id) + '/start';
+    const r = UrlFetchApp.fetch(url, {
+      method: 'post',
+      headers: { Authorization: 'Token ' + token, Accept: 'application/json' },
+      muteHttpExceptions: true
+    });
+    if (r.getResponseCode() < 200 || r.getResponseCode() >= 300) {
+      detalle = 'Reactivación HTTP ' + r.getResponseCode() + ': ' + monitorRecortar_(r.getContentText(), 200);
+    }
+  } catch (e) {
+    detalle = 'Error al reactivar: ' + String(e.message || e);
+  }
+
+  Utilities.sleep(1200);
+  try {
+    const r = UrlFetchApp.fetch(apiBase + '/scenarios/' + encodeURIComponent(escenario.id), {
+      method: 'get',
+      headers: { Authorization: 'Token ' + token, Accept: 'application/json' },
+      muteHttpExceptions: true
+    });
+    if (r.getResponseCode() !== 200) throw new Error('Verificación HTTP ' + r.getResponseCode());
+    const json = JSON.parse(r.getContentText());
+    const s = json.scenario || json;
+    return {
+      activo: s.isActive === true && s.isPaused !== true,
+      pausado: s.isPaused === true,
+      detalle: detalle || 'Reactivación no confirmada por Make'
+    };
+  } catch (e) {
+    return { activo: false, pausado: true, detalle: detalle + ' / ' + String(e.message || e) };
+  }
+}
+
+/**
+ * Pushover emergencia: prioridad 2, repetición cada 60 s hasta ACK.
+ * No crea una alerta nueva en cada chequeo; renueva sólo cada 30 min.
+ */
+function monitorMakeAlertaCritica_(props, escenario, detalle) {
+  const ahora = Date.now();
+  const previo = Number(props.getProperty(MONITOR_MAKE_CONFIG.PROP_ALERTA_CRITICA) || 0);
+  if (previo && ahora - previo < 30 * 60000) return;
+  const user = props.getProperty('PUSHOVER_USER_KEY');
+  const token = props.getProperty('PUSHOVER_API_TOKEN');
+  if (!user || !token) throw new Error('Faltan credenciales Pushover para alerta crítica');
+  const resp = UrlFetchApp.fetch('https://api.pushover.net/1/messages.json', {
+    method: 'post',
+    payload: {
+      token: token, user: user, priority: '2', retry: '60', expire: '1800',
+      sound: 'siren',
+      title: '🚨 URGENTE: WHATSAPP DETENIDO',
+      message: 'No se pudo confirmar la reactivación de Entrada Meta - Telegram (6462572).\n' +
+        'Los pedidos y códigos PROMO pueden quedar sin respuesta.\n' +
+        'Detalle: ' + (detalle || 'Sin información') + '\n' +
+        'Verifique Make inmediatamente.'
+    },
+    muteHttpExceptions: true
+  });
+  if (resp.getResponseCode() < 200 || resp.getResponseCode() >= 300) {
+    throw new Error('Pushover emergencia HTTP ' + resp.getResponseCode() + ': ' + resp.getContentText());
+  }
+  props.setProperty(MONITOR_MAKE_CONFIG.PROP_ALERTA_CRITICA, String(ahora));
 }
