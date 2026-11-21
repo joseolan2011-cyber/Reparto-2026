@@ -134,6 +134,16 @@ jobs:
           print('Reparto central listo: Telegram legacy desactivado; watchdogs preservados')
           PY
 
+      - name: Incorporar limpieza nocturna sin alterar otros modulos
+        run: |
+          test -f "$GITHUB_WORKSPACE/LimpiezaFilasVaciasReparto.js"
+          node --check "$GITHUB_WORKSPACE/LimpiezaFilasVaciasReparto.js"
+          grep -q "LIMPIEZA_REPARTO_verificarInstalacion();" "$GITHUB_WORKSPACE/SYNC_CARGAS_OPSU.gs.js"
+          rm -f /tmp/reparto-remote/LimpiezaFilasVaciasReparto.js /tmp/reparto-remote/LimpiezaFilasVaciasReparto.gs
+          cp "$GITHUB_WORKSPACE/LimpiezaFilasVaciasReparto.js" /tmp/reparto-remote/LimpiezaFilasVaciasReparto.js
+          grep -q "function LIMPIEZA_REPARTO_ejecutar" /tmp/reparto-remote/LimpiezaFilasVaciasReparto.js
+          grep -q "LIMPIEZA_REPARTO_verificarInstalacion();" /tmp/reparto-remote/SYNC_CARGAS_OPSU.js
+
       - name: Validate critical modules before push
         run: |
           grep -q "monitorPedidos();" /tmp/reparto-remote/SYNC_CARGAS_OPSU.js

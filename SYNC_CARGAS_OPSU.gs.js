@@ -1171,6 +1171,16 @@ function MONITOREO_CENTRAL_cadaMinuto() {
 
   }
 
+  // Sólo comprueba los activadores una vez al día; NO borra filas desde el monitor.
+  try {
+    LIMPIEZA_REPARTO_verificarInstalacion();
+  } catch (error) {
+    console.error(
+      'MONITOR CENTRAL - error al verificar limpieza nocturna: ' +
+      (error.stack || error.message)
+    );
+  }
+
 
   console.log(
     'MONITOR CENTRAL terminado en ' +
